@@ -4,6 +4,34 @@
 
 Kazzu é um player de música livre em Rust e Slint, voltado a Hi-Fi e Hi-Res até 24 bits, privacidade extrema e nenhuma telemetria. A interface segue uma linguagem Apple-like, com vidro, temas claro e escuro e ajustes de aparência. O núcleo prioriza baixo overhead, com callback de áudio sem alocação e renderer de software como alternativa para máquinas modestas.
 
+## Capturas de tela
+
+![Início](design/v4/shots/ui-nova/01-home.png)
+
+![Explorar](design/v4/shots/ui-nova/02-explore.png)
+
+![Biblioteca](design/v4/shots/ui-nova/03-library.png)
+
+![Busca](design/v4/shots/ui-nova/04-search.png)
+
+![Retrospectiva](design/v4/shots/ui-nova/05-replay.png)
+
+![Configurações](design/v4/shots/ui-nova/06-settings.png)
+
+![Detalhes de configuração](design/v4/shots/ui-nova/07-settings-page.png)
+
+![Aparência](design/v4/shots/ui-nova/08-appearance.png)
+
+![Tema claro](design/v4/shots/ui-nova/09-light.png)
+
+![Player](design/v4/shots/ui-nova/10-player.png)
+
+![Fila](design/v4/shots/ui-nova/11-queue.png)
+
+![Mais opções](design/v4/shots/ui-nova/12-more.png)
+
+![Letras](design/v4/shots/ui-nova/13-lyrics.png)
+
 ## Funcionalidades atuais
 
 - Reprodução de arquivos locais em FLAC, WAV, AIFF, CAF, ALAC, MP3, AAC, Vorbis, Opus e ADPCM, com saída bit-perfect quando o volume é 1 e o dispositivo aceita a taxa original.
