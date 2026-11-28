@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use kazzu_library::{HistoryEntry, Library, PlaylistEntry, Track, TrackId};
+use kazzu_library::{Library, PlaylistEntry, Track, TrackId};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -111,28 +111,22 @@ pub(crate) fn export(library: &Library, root: &Path, config: Config) -> Result<S
     let mut liked = Vec::new();
     for track in library.liked().map_err(|error| error.to_string())? {
         liked.push(SavedLiked {
-            id: track.id.0.clone(),
-            kind: match &track.source {
-                kazzu_core::TrackSource::Local { .. } => "local".into(),
-                kazzu_core::TrackSource::Remote { .. } => "remote".into(),
-            },
+            id: track.id.0.to_string(),
+            kind: "local".into(),
             title: track.title.clone(),
-            artist: track.artists.first().map_or_else(String::new, |a| a.name.clone()),
-            album: track.album.clone().map(|a| a.title),
+            artist: track.artists.first().cloned().unwrap_or_default(),
+            album: track.album.clone(),
         });
     }
     let mut history = Vec::new();
     for entry in library.history(200).map_err(|error| error.to_string())? {
         let t = &entry.track;
         history.push(SavedHistory {
-            id: t.id.0.clone(),
-            kind: match &t.source {
-                kazzu_core::TrackSource::Local { .. } => "local".into(),
-                kazzu_core::TrackSource::Remote { .. } => "remote".into(),
-            },
+            id: t.id.0.to_string(),
+            kind: "local".into(),
             title: t.title.clone(),
-            artist: t.artists.first().map_or_else(String::new, |a| a.name.clone()),
-            album: t.album.clone().map(|a| a.title),
+            artist: t.artists.first().cloned().unwrap_or_default(),
+            album: t.album.clone(),
             played_at: entry.played_at,
             listened_ms: entry.listened_ms as u64,
         });

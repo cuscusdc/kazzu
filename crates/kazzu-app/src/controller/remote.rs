@@ -1233,10 +1233,11 @@ impl<V: View> Controller<V> {
     pub(crate) fn android_queue_action(&mut self, action: &str, id: &str) {
         let Ok(id) = id.parse::<u64>() else { return };
         let id = QueueItemId(id);
+        let has_focus = self.android_has_focus();
         let upcoming = self.upcoming();
         let Some(index) = upcoming.iter().position(|item| item.id == id) else { return };
         match action {
-            "jump" if self.android_has_focus() => self.engine.jump_to(id),
+            "jump" if has_focus => self.engine.jump_to(id),
             "remove" => self.engine.remove(id),
             "move" if index > 0 => self.engine.move_before(id, upcoming[index - 1].id),
             _ => {}

@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 use kazzu_audio::{EngineHandle, StreamEvent};
 use kazzu_core::{CoverRef, OutputInfo, PlaybackEvent, PlaybackStatus, QueueItem, QueueItemId, RepeatMode, Track as CoreTrack, TrackSource};
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use kazzu_core::PlaybackState;
 use kazzu_ytm::Category;
 
 use crate::accent::Accent;

@@ -367,7 +367,7 @@ impl IosBackend {
         let Some(window) = window else { return };
         let tree = crate::accessibility::tree(&window.global::<AppBridge>());
         {
-            let mut last = LAST_ACCESSIBILITY.lock().unwrap_or_else(|error| error.into_inner());
+            let last = LAST_ACCESSIBILITY.lock().unwrap_or_else(|error| error.into_inner());
             if last.as_deref() == Some(tree.as_str()) {
                 return;
             }
@@ -496,11 +496,19 @@ impl IosBackend {
         bridge.set_version(env!("CARGO_PKG_VERSION").into());
 
         macro_rules! bind {
-            ($callback:ident, $method:ident $(, $arg:ident $(=> $value:expr)?)*) => {{
+            ($callback:ident, $method:ident) => {{
                 let weak = Rc::downgrade(&controller);
-                bridge.$callback(move |$($arg),*| {
+                bridge.$callback(move || {
                     if let Some(controller) = weak.upgrade() {
-                        controller.borrow_mut().$method($($value),*);
+                        controller.borrow_mut().$method();
+                    }
+                });
+            }};
+            ($callback:ident, $method:ident, $($arg:ident => $value:expr),+ $(,)?) => {{
+                let weak = Rc::downgrade(&controller);
+                bridge.$callback(move |$($arg),+| {
+                    if let Some(controller) = weak.upgrade() {
+                        controller.borrow_mut().$method($($value),+);
                     }
                 });
             }};
