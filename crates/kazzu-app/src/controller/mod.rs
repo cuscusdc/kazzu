@@ -1623,7 +1623,7 @@ impl<V: View> Controller<V> {
         self.publish_search();
     }
 
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(target_os = "android")]
     pub fn add_folder(&mut self) {
         if !crate::android::select_music_folder() {
             self.notice("Seletor de pastas indisponível.", true);
