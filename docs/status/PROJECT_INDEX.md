@@ -1,5 +1,7 @@
 # Índice do projeto Kazzu
 
+> Documento histórico. Para o mapa atual de design, protótipos, builds, testes e capturas, veja [`docs/INDEX.md`](../INDEX.md).
+
 ## Aplicativo
 
 - `crates/` — crates Rust do app, player, biblioteca, provedores e galeria.

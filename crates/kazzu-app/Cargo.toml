@@ -10,6 +10,11 @@ build = "build.rs"
 name = "kazzu"
 path = "src/main.rs"
 
+[lib]
+name = "kazzu_app"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
 [features]
 default = ["demo"]
 # Gera uma biblioteca de demonstração (WAV/FLAC fictícios com tags e capa) para `--demo-library`.

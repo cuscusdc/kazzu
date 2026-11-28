@@ -64,7 +64,7 @@ impl TrackDecoder {
     pub fn open(source: &StreamSource) -> Result<Self> {
         match source {
             StreamSource::File { path } => Self::open_file(path),
-            StreamSource::Url { .. } => Err(Error::Unsupported(
+            StreamSource::Deferred | StreamSource::Url { .. } => Err(Error::Unsupported(
                 "URL streams are opened asynchronously by the engine".into(),
             )),
         }

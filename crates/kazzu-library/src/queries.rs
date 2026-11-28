@@ -1,5 +1,6 @@
 //! Consultas: faixas, álbuns, artistas, busca, playlists, curtidos, histórico.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use rusqlite::{OptionalExtension, Row, params};
@@ -122,6 +123,18 @@ fn scan_playlist_items(conn: &rusqlite::Connection, id: PlaylistId) -> Result<Ve
     Ok(out)
 }
 
+/// Resolved entries for a portable, additive playlist restore.
+pub enum RestorePlaylistEntry {
+    Local(TrackId),
+    Remote(Box<kazzu_core::Track>),
+}
+
+pub struct RestoredPlaylist {
+    pub name: String,
+    pub entries: Vec<RestorePlaylistEntry>,
+    pub cover: Option<Vec<u8>>,
+}
+
 impl Library {
     fn hydrate(&self, mut tracks: Vec<Track>) -> Result<Vec<Track>> {
         let mut st = self.conn.prepare_cached(
@@ -175,6 +188,24 @@ impl Library {
     // ---- faixas ----------------------------------------------------------
 
     /// Todas as faixas (artista, álbum, disco, faixa).
+    pub fn never_played(&self, limit: usize) -> Result<Vec<Track>> {
+        self.tracks_query(
+            "WHERE NOT EXISTS (
+                SELECT 1 FROM play_history h WHERE h.track_id = t.id
+             ) ORDER BY t.added_at DESC, t.id DESC LIMIT ?1",
+            [limit.min(i64::MAX as usize) as i64],
+        )
+    }
+
+    pub fn genres(&self) -> Result<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT MIN(genre) FROM tracks WHERE TRIM(genre) <> ''
+             GROUP BY TRIM(genre) COLLATE NOCASE ORDER BY MIN(genre) COLLATE NOCASE",
+        )?;
+        let genres = statement.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(genres)
+    }
+
     pub fn tracks(&self) -> Result<Vec<Track>> {
         self.tracks_query("ORDER BY t.title COLLATE NOCASE", [])
     }
@@ -369,6 +400,75 @@ impl Library {
         Ok(())
     }
 
+    /// Stores a remote listen using metadata only. Signed transport URLs stay in the engine.
+    pub fn record_remote_play(&self, track: &kazzu_core::Track, listened_ms: u64) -> Result<()> {
+        let kazzu_core::TrackSource::Remote { provider, id } = &track.source else {
+            return Err(Error::InvalidRemote("a faixa não possui provedor remoto".into()));
+        };
+        let json = serde_json::to_string(track).map_err(|error| Error::InvalidRemote(error.to_string()))?;
+        let artist = track.artists.first().map_or("", |artist| artist.name.as_str());
+        let album = track.album.as_ref().map_or("", |album| album.title.as_str());
+        self.conn.execute(
+            "INSERT INTO remote_play_history(provider, remote_id, track_json, title, artist, album, played_at, listened_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![provider_key(*provider)?, id, json, track.title, artist, album, now(), listened_ms.min(i64::MAX as u64) as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Metadata for completed-stream lookup, with one row per provider/track.
+    pub fn known_remote_tracks(&self) -> Result<Vec<kazzu_core::Track>> {
+        let mut statement = self.conn.prepare(
+            "SELECT track_json FROM remote_play_history GROUP BY provider, remote_id
+             UNION ALL
+             SELECT remote_json FROM playlist_items WHERE remote_json IS NOT NULL GROUP BY remote_provider, remote_id",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut tracks = Vec::new();
+        for row in rows {
+            if let Ok(track) = serde_json::from_str(&row?) {
+                tracks.push(track);
+            }
+        }
+        Ok(tracks)
+    }
+
+    /// Most recently heard local and remote entries, with each song appearing once.
+    pub fn recent_mixed(&self, limit: usize) -> Result<Vec<PlaylistEntry>> {
+        let mut st = self.conn.prepare(
+            "SELECT track_id, track_json FROM (
+                SELECT track_id, NULL AS track_json, MAX(played_at) AS played_at, MAX(id) AS entry
+                FROM play_history GROUP BY track_id
+                UNION ALL
+                SELECT NULL, track_json, played_at, id FROM (
+                    SELECT track_json, played_at, id,
+                      ROW_NUMBER() OVER (PARTITION BY provider, remote_id ORDER BY played_at DESC, id DESC) AS track_rank
+                    FROM remote_play_history
+                ) WHERE track_rank = 1
+             ) ORDER BY played_at DESC, entry DESC LIMIT ?1",
+        )?;
+        let rows = st.query_map([limit.min(i64::MAX as usize) as i64], |row| {
+            Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            match row? {
+                (Some(id), _) => {
+                    if let Some(track) = self.track(TrackId(id))? {
+                        entries.push(PlaylistEntry::Local(track));
+                    }
+                }
+                (_, Some(json)) => {
+                    if let Ok(track) = serde_json::from_str(&json) {
+                        entries.push(PlaylistEntry::Remote(track));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(entries)
+    }
+
     /// Reproduções, mais recentes primeiro.
     pub fn history(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
         self.history_range(i64::MIN, i64::MAX, limit)
@@ -420,14 +520,20 @@ impl Library {
     /// Minutos e número de reproduções registrados no histórico local.
     pub fn listening_totals(&self) -> Result<(u64, u64)> {
         Ok(self.conn.query_row(
-            "SELECT COALESCE(SUM(listened_ms), 0) / 60000, COUNT(*) FROM play_history",
+            "SELECT COALESCE(SUM(listened_ms), 0) / 60000, COUNT(*) FROM (SELECT listened_ms FROM play_history UNION ALL SELECT listened_ms FROM remote_play_history)",
             [], |row| Ok((row.get::<_, i64>(0)?.max(0) as u64, row.get::<_, i64>(1)?.max(0) as u64)),
         )?)
     }
 
     /// Apaga todo o histórico de reprodução.
     pub fn clear_history(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM play_history", [])?;
+        self.conn.execute_batch("SAVEPOINT clear_history;
+            DELETE FROM play_history;
+            DELETE FROM remote_play_history;
+            RELEASE clear_history;").map_err(|error| {
+                let _ = self.conn.execute_batch("ROLLBACK TO clear_history; RELEASE clear_history;");
+                error
+            })?;
         Ok(())
     }
 
@@ -440,6 +546,146 @@ impl Library {
             params![name.trim(), t],
         )?;
         Ok(PlaylistId(self.conn.last_insert_rowid()))
+    }
+
+    /// Imports a local playlist in one transaction, preserving the order and repeats.
+    pub fn import_local_playlist(&mut self, name: &str, tracks: &[TrackId]) -> Result<PlaylistId> {
+        let tx = self.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let stamp = now();
+        tx.execute(
+            "INSERT INTO playlists(name, created_at, updated_at) VALUES (?1, ?2, ?2)",
+            params![name.trim(), stamp],
+        )?;
+        let id = PlaylistId(tx.last_insert_rowid());
+        for (index, track) in tracks.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO playlist_items(playlist_id, track_id, position, added_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id.0, track.0, index as i64, stamp],
+            )?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Mescla listas restauradas por nome: listas existentes ganham apenas
+    /// entradas ausentes, capas locais vencem e duplicatas são ignoradas.
+    pub fn restore_playlists(&mut self, playlists: &[RestoredPlaylist]) -> Result<usize> {
+        let tx = self.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let stamp = now();
+        let mut added_total = 0;
+        for playlist in playlists {
+            let name = playlist.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let id = tx
+                .query_row(
+                    "SELECT id FROM playlists WHERE name = ?1 ORDER BY id LIMIT 1",
+                    [name],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let id = match id {
+                Some(id) => PlaylistId(id),
+                None => {
+                    tx.execute(
+                        "INSERT INTO playlists(name, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                        params![name, stamp],
+                    )?;
+                    PlaylistId(tx.last_insert_rowid())
+                }
+            };
+            if let Some(cover) = &playlist.cover {
+                tx.execute(
+                    "INSERT INTO playlist_covers(playlist_id, image) VALUES (?1, ?2)
+                     ON CONFLICT(playlist_id) DO NOTHING",
+                    params![id.0, cover],
+                )?;
+            }
+            let mut position: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_items WHERE playlist_id = ?1",
+                [id.0],
+                |row| row.get(0),
+            )?;
+            let mut seen = HashSet::new();
+            let mut rows = tx.prepare(
+                "SELECT track_id, remote_provider, remote_id FROM playlist_items WHERE playlist_id = ?1",
+            )?;
+            {
+                let values = rows.query_map([id.0], |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })?;
+                for existing in values {
+                    let (local, provider, remote) = existing?;
+                    seen.insert(match (local, provider, remote) {
+                        (Some(local), _, _) => local.to_string(),
+                        (None, Some(provider), Some(remote)) => format!("remote:{provider}:{remote}"),
+                        _ => continue,
+                    });
+                }
+            }
+            drop(rows);
+            let mut added = 0;
+            for entry in &playlist.entries {
+                let (key, local, remote) = match entry {
+                    RestorePlaylistEntry::Local(track) => (track.0.to_string(), Some(track.0), None),
+                    RestorePlaylistEntry::Remote(track) => {
+                        let kazzu_core::TrackSource::Remote { provider, id: remote } = &track.source else {
+                            return Err(Error::InvalidRemote("referência remota inválida".into()));
+                        };
+                        let provider = provider_key(*provider)?;
+                        (format!("remote:{provider}:{remote}"), None, Some((provider, remote.clone(), track)))
+                    }
+                };
+                if !seen.insert(key) {
+                    continue;
+                }
+                if let Some(track) = local {
+                    tx.execute(
+                        "INSERT INTO playlist_items(playlist_id, track_id, position, added_at) VALUES (?1, ?2, ?3, ?4)",
+                        params![id.0, track, position, stamp],
+                    )?;
+                } else if let Some((provider, remote, track)) = remote {
+                    let json = serde_json::to_string(track).map_err(|e| Error::InvalidRemote(e.to_string()))?;
+                    tx.execute(
+                        "INSERT INTO playlist_items(playlist_id, remote_provider, remote_id, remote_json, position, added_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![id.0, provider, remote, json, position, stamp],
+                    )?;
+                }
+                position += 1;
+                added += 1;
+            }
+            if added > 0 {
+                tx.execute(
+                    "UPDATE playlists SET updated_at = ?2 WHERE id = ?1",
+                    params![id.0, stamp],
+                )?;
+                added_total += added;
+            }
+        }
+        tx.commit()?;
+        Ok(added_total)
+    }
+
+    pub fn playlist_cover(&self, id: PlaylistId) -> Result<Option<Vec<u8>>> {
+        Ok(self.conn.query_row(
+            "SELECT image FROM playlist_covers WHERE playlist_id = ?1", [id.0], |row| row.get(0),
+        ).optional()?)
+    }
+
+    pub fn set_playlist_cover(&self, id: PlaylistId, image: &[u8]) -> Result<()> {
+        self.require_playlist(id)?;
+        self.conn.execute(
+            "INSERT INTO playlist_covers(playlist_id, image) VALUES (?1, ?2)
+             ON CONFLICT(playlist_id) DO UPDATE SET image = excluded.image",
+            params![id.0, image],
+        )?;
+        Ok(())
     }
 
     pub fn rename_playlist(&self, id: PlaylistId, name: &str) -> Result<()> {

@@ -95,6 +95,13 @@ pub(crate) struct RemoteSpec {
 
 impl RemoteFeed {
     pub fn spawn(ctx: &Arc<NetContext>, spec: RemoteSpec) -> Self {
+        Self::spawn_with(ctx, move |_| Ok(spec))
+    }
+
+    pub fn spawn_with(
+        ctx: &Arc<NetContext>,
+        resolve: impl FnOnce(&Link) -> Result<RemoteSpec, FeedFailure> + Send + 'static,
+    ) -> Self {
         let (tx, rx) = crossbeam_channel::bounded(CHANNEL_CHUNKS);
         let link = Link::new();
         let feed = Self {
@@ -107,7 +114,16 @@ impl RemoteFeed {
         let ctx = Arc::clone(ctx);
         let spawned = std::thread::Builder::new()
             .name("kazzu-stream".into())
-            .spawn(move || worker(ctx, link, spec, tx));
+            .spawn(move || {
+                if link.is_cancelled() {
+                    return;
+                }
+                match resolve(&link) {
+                    Ok(spec) if !link.is_cancelled() => worker(ctx, link, spec, tx),
+                    Ok(_) => {}
+                    Err(error) => { let _ = tx.send(Msg::Failed(error)); }
+                }
+            });
         if let Err(e) = spawned {
             // The receiver reports a disconnected channel as a failure.
             log::warn!("cannot start stream worker: {e}");

@@ -1,5 +1,6 @@
+import { SearchField } from "browse.slint";
 import { ScrollView } from "std-widgets.slint";
-import { Demo } from "data.slint";
+import { AppBridge } from "app-bridge.slint";
 import { UI, Screen, Sheet } from "state.slint";
 import { Ink, Icon, Glass, Action, Pill, Artwork, Row, Scrubber, Vinyl } from "components.slint";
 
@@ -56,9 +57,9 @@ export component BottomIsland inherits Rectangle {
             x: 0;
             y: UI.mini-hidden ? parent.height : root.drag-offset;
             height: parent.height;
-            visible: self.y < parent.height;
+            visible: AppBridge.has-now && self.y < parent.height;
             animate y { duration: UI.motion && !root.pulling ? 220ms : 0ms; easing: ease-out; }
-            radius: UI.toggles[2] ? 30px : 20px;
+            radius: UI.rounded ? 30px : 20px;
 
             property <bool> wide: self.width >= 470px;
             property <length> outer-padding: root.cover-inset;
@@ -95,7 +96,7 @@ export component BottomIsland inherits Rectangle {
                 glyph: UI.liked ? @image-url("assets/heart-filled.svg") : @image-url("assets/heart.svg");
                 ink: UI.liked ? UI.palette.accent : UI.palette.ink;
                 title: UI.liked ? "Descurtir" : "Curtir";
-                activated => { UI.liked = !UI.liked; }
+                activated => { AppBridge.toggle-like(UI.track.id); }
             }
             HorizontalLayout {
                 x: transport-x; y: (parent.height - self.height) / 2;
@@ -110,7 +111,7 @@ export component BottomIsland inherits Rectangle {
                     fill: UI.palette.ink.with-alpha(0.12);
                     glyph: UI.playing ? @image-url("assets/pause.svg") : @image-url("assets/play.svg");
                     title: UI.playing ? "Pausar" : "Tocar";
-                    activated => { UI.playing = !UI.playing; }
+                    activated => { AppBridge.toggle-play(); }
                 }
                 Action {
                     width: control-width; size: 36px; glyph-size: 18px;
@@ -128,7 +129,7 @@ export component BottomIsland inherits Rectangle {
         MiniDrag {
             x: 0;
             width: mini.info-end;
-            enabled: !UI.mini-hidden;
+            enabled: AppBridge.has-now && !UI.mini-hidden;
             pull(distance) => {
                 root.pulling = true;
                 root.drag-offset = min(parent.height, distance);
@@ -263,25 +264,34 @@ component LyricsCard inherits Rectangle {
     private property <int> count: UI.track.lyrics.length;
     private property <bool> timed: root.count > 0 && UI.track.lyric-times.length == root.count;
     private property <int> active-line;
-    private property <int> track-index: UI.track-index;
-    changed track-index => { self.active-line = 0; }
+    private property <string> track-id: UI.track.id;
+    changed track-id => { self.active-line = 0; }
     border-radius: root.radius;
     background: UI.palette.card;
     clip: true;
 
     Rectangle {
         x: 13px; y: 36px; width: parent.width - 26px; height: parent.height - 44px; clip: true;
-        if root.count == 0 : Ink {
+        if root.count == 0 && AppBridge.lyrics-text.is-empty : Ink {
             width: parent.width;
-            text: "Letra não cadastrada para esta música";
+            text: AppBridge.lyrics-loading ? "Buscando letra…" :
+                (AppBridge.lyrics-attribution.is-empty ? "Letra não cadastrada para esta música" : AppBridge.lyrics-attribution);
             color: UI.palette.muted; font-size: 18px; font-weight: 700;
             wrap: word-wrap; overflow: clip; horizontal-alignment: center;
         }
+        if !AppBridge.lyrics-text.is-empty : ScrollView {
+            width: parent.width; height: parent.height; horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                spacing: 6px;
+                Ink { text: AppBridge.lyrics-text; wrap: word-wrap; overflow: clip; }
+                Ink { text: AppBridge.lyrics-attribution; color: UI.palette.muted; wrap: word-wrap; }
+            }
+        }
         for line[index] in UI.track.lyrics : Rectangle {
             property <bool> active: root.timed
-                ? (index == 0 || UI.position >= UI.track.lyric-times[index])
-                    && (index == root.count - 1 || UI.position < UI.track.lyric-times[index + 1])
-                : index == min(root.count - 1, floor(UI.progress * root.count));
+                ? (index == 0 || AppBridge.position-ms >= UI.track.lyric-times[index])
+                    && (index == root.count - 1 || AppBridge.position-ms < UI.track.lyric-times[index + 1])
+                : index == 0;
             changed active => { if (self.active) { root.active-line = index; } }
             y: (parent.height - self.height) / 2 + (index - root.active-line) * 53px;
             height: 53px;
@@ -293,7 +303,7 @@ component LyricsCard inherits Rectangle {
                 color: active ? UI.palette.ink : UI.palette.muted;
                 vertical-alignment: center; horizontal-alignment: center; wrap: word-wrap;
             }
-            TouchArea { enabled: root.timed; clicked => { UI.position = UI.track.lyric-times[index]; } }
+            TouchArea { enabled: root.timed; clicked => { AppBridge.seek(UI.track.lyric-times[index] / max(1, UI.track.duration * 1000)); } }
         }
     }
     Rectangle {
@@ -344,10 +354,10 @@ component Stage inherits Rectangle {
             placement: UI.playing ? -28deg : -66deg;
             advance: UI.playing ? -root.progress * 22deg : 0deg;
         }
-        TouchArea { enabled: !UI.lyrics; clicked => { UI.lyrics = true; } }
+        TouchArea { enabled: !UI.lyrics; clicked => { UI.lyrics = true; AppBridge.lyrics-request(); } }
         accessible-role: button;
         accessible-label: "Mostrar letra";
-        accessible-action-default => { UI.lyrics = true; }
+        accessible-action-default => { UI.lyrics = true; AppBridge.lyrics-request(); }
     }
     LyricsCard {
         radius: root.cover-radius;
@@ -387,7 +397,7 @@ export component Player inherits Rectangle {
         x: root.cover-x + (root.stage-size - self.width) / 2;
         y: root.top-inset + 6px + stage-slot.y + (root.stage-size - self.height) / 2;
         width: root.stage-size * 1.65; height: self.width;
-        opacity: UI.radios[4] == 2 && UI.motion && UI.playing ? 0.70 + sin(animation-tick() / 1s * 80deg) * 0.14 : 0.64;
+        opacity: UI.effects == 2 && UI.motion && UI.playing ? 0.70 + sin(animation-tick() / 1s * 80deg) * 0.14 : 0.64;
         image-fit: contain; source: UI.track.glow;
     }
     VerticalLayout {
@@ -407,7 +417,7 @@ export component Player inherits Rectangle {
                 HorizontalLayout {
                     padding: 3px; spacing: 2px;
                     Pill { title: "Áudio"; glyph: @image-url("assets/headphones.svg"); selected: true; inverse: true; horizontal-stretch: 1; }
-                    Pill { title: "Vídeo"; glyph: @image-url("assets/video.svg"); horizontal-stretch: 1; activated => { UI.toast("Vídeo indisponível para esta faixa"); } }
+                    Pill { title: "Vídeo"; glyph: @image-url("assets/video.svg"); horizontal-stretch: 1; activated => { AppBridge.watch-now(); } }
                 }
             }
             Rectangle { horizontal-stretch: 1; }
@@ -428,31 +438,31 @@ export component Player inherits Rectangle {
             }
             Action {
                 title: "Compartilhar"; glyph: @image-url("assets/share.svg"); fill: UI.palette.ink.with-alpha(0.10);
-                activated => { UI.toast("Ouvindo " + UI.track.title + " no kazzu"); }
+                activated => { AppBridge.share-now(); }
             }
             Action {
                 title: UI.liked ? "Descurtir" : "Curtir";
                 radius: 12px; glyph: UI.liked ? @image-url("assets/heart-filled.svg") : @image-url("assets/heart.svg");
                 ink: UI.liked ? UI.palette.bg : UI.palette.ink;
                 fill: UI.liked ? UI.palette.ink : UI.palette.ink.with-alpha(0.10);
-                activated => { UI.liked = !UI.liked; }
+                activated => { AppBridge.toggle-like(UI.track.id); }
             }
         }
         Glass {
             height: root.controls-height;
-            radius: UI.toggles[2] ? 38px : 20px;
+            radius: UI.rounded ? 38px : 20px;
             VerticalLayout {
                 padding-left: 13px; padding-right: 13px; padding-top: 7px; padding-bottom: 7px;
                 spacing: 1px;
                 Scrubber {
-                    height: root.waveform-height; waveform: true; seed: UI.track-index;
+                    height: root.waveform-height; waveform: true;
                     label: "Progresso da faixa"; value: UI.progress;
-                    changed(fraction) => { UI.position = round(fraction * UI.track.duration); }
+                    changed(fraction) => { if (AppBridge.seekable) { AppBridge.seek(fraction); } }
                 }
                 HorizontalLayout {
                     height: 16px;
-                    Ink { text: UI.time(UI.position); color: UI.palette.muted; font-size: 12px; horizontal-stretch: 1; }
-                    Ink { text: "-" + UI.time(max(0, UI.track.duration - UI.position)); color: UI.palette.muted; font-size: 12px; }
+                    Ink { text: AppBridge.position; color: UI.palette.muted; font-size: 12px; horizontal-stretch: 1; }
+                    Ink { text: AppBridge.remaining; color: UI.palette.muted; font-size: 12px; }
                 }
                 HorizontalLayout {
                     height: root.play-row;
@@ -460,7 +470,7 @@ export component Player inherits Rectangle {
                     Action {
                         glyph: @image-url("assets/shuffle.svg"); title: "Modo aleatório";
                         ink: UI.shuffle ? UI.palette.secondary : UI.palette.ink;
-                        activated => { UI.shuffle = !UI.shuffle; }
+                        activated => { AppBridge.toggle-shuffle(); }
                     }
                     Action { glyph: @image-url("assets/prev.svg"); title: "Anterior"; activated => { UI.previous(); } }
                     Action {
@@ -468,13 +478,13 @@ export component Player inherits Rectangle {
                         glyph: UI.playing ? @image-url("assets/pause.svg") : @image-url("assets/play.svg");
                         title: UI.playing ? "Pausar" : "Tocar";
                         fill: UI.palette.ink; ink: UI.palette.bg; glyph-size: 22px;
-                        activated => { UI.playing = !UI.playing; }
+                        activated => { AppBridge.toggle-play(); }
                     }
                     Action { glyph: @image-url("assets/next.svg"); title: "Próxima"; activated => { UI.next(); } }
                     Action {
                         glyph: @image-url("assets/repeat.svg"); title: "Repetir";
                         ink: UI.repeat ? UI.palette.secondary : UI.palette.ink;
-                        activated => { UI.repeat = !UI.repeat; }
+                        activated => { AppBridge.cycle-repeat(); }
                     }
                 }
                 HorizontalLayout {
@@ -482,9 +492,9 @@ export component Player inherits Rectangle {
                     spacing: 7px;
                     Icon { width: 18px; height: 16px; source: @image-url("assets/volumeLow.svg"); tint: UI.palette.muted; }
                     Scrubber {
-                        label: "Volume"; value: UI.volume / 100;
+                        label: "Volume"; value: UI.volume;
                         tint: UI.palette.ink; horizontal-stretch: 1;
-                        changed(fraction) => { UI.volume = round(fraction * 100); }
+                        changed(fraction) => { AppBridge.set-volume(fraction); }
                     }
                     Icon { width: 18px; height: 16px; source: @image-url("assets/volumeHigh.svg"); tint: UI.palette.muted; }
                 }
@@ -499,10 +509,10 @@ export component Player inherits Rectangle {
                         glyph: [@image-url("assets/queue.svg"), @image-url("assets/lyrics.svg"), @image-url("assets/timer.svg"), @image-url("assets/more.svg"), @image-url("assets/device.svg")][i];
                         activated => {
                             if (i == 0) { UI.sheet = Sheet.queue; }
-                            else if (i == 1) { UI.lyrics = !UI.lyrics; }
-                            else if (i == 2) { UI.toast("Temporizador: desligar em 30 minutos"); }
+                            else if (i == 1) { UI.lyrics = !UI.lyrics; if (UI.lyrics) { AppBridge.lyrics-request(); } }
+                            else if (i == 2) { UI.sheet = Sheet.sleep; }
                             else if (i == 3) { UI.sheet = Sheet.more; }
-                            else { UI.toast("Saída: alto-falantes do aparelho"); }
+                            else { AppBridge.list-outputs(); UI.sheet = Sheet.outputs; }
                         }
                     }
                 }
@@ -518,7 +528,8 @@ export component PlayerSheet inherits Rectangle {
     private property <length> sheet-height: min(root.height * 0.75, (root.content == Sheet.queue ? root.height * 0.60 : 296px) + root.bottom-inset);
     private property <bool> open: UI.sheet != Sheet.none;
     visible: shade.opacity > 0 || panel.y < self.height;
-    changed open => { if (self.open) { self.content = UI.sheet; } }
+    private property <Sheet> requested-sheet: UI.sheet;
+    changed requested-sheet => { if (root.requested-sheet != Sheet.none) { root.content = root.requested-sheet; } }
 
     shade := Rectangle {
         background: #00000087;
@@ -543,7 +554,7 @@ export component PlayerSheet inherits Rectangle {
                 Rectangle { y: 9px; width: 36px; height: 4px; border-radius: 2px; background: UI.palette.outline; }
                 Ink {
                     x: 4px; y: 23px; width: parent.width - 55px; font-size: 18px; font-weight: 800;
-                    text: root.content == Sheet.queue ? "Fila de reprodução" : "Mais opções";
+                    text: root.content == Sheet.queue ? "Fila de reprodução" : root.content == Sheet.sleep ? "Temporizador" : root.content == Sheet.outputs ? "Saída de áudio" : root.content == Sheet.playlist-create ? "Nova playlist" : root.content == Sheet.playlist-rename ? "Renomear playlist" : root.content == Sheet.playlist-delete ? "Excluir playlist" : root.content == Sheet.playlist-add ? "Adicionar à playlist" : root.content == Sheet.metadata ? "Editar metadados" : "Mais opções";
                 }
                 Action { x: parent.width - 48px; y: 9px; size: 32px; glyph: @image-url("assets/close.svg"); title: "Fechar"; activated => { UI.sheet = Sheet.none; } }
             }
@@ -551,11 +562,88 @@ export component PlayerSheet inherits Rectangle {
                 vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                 VerticalLayout {
                     spacing: 6px;
-                    for track[i] in Demo.tracks : Row {
-                        title: UI.track-index == i ? "▶ " + track.title : track.title;
-                        sub: track.artist; art: track.cover; detail: UI.time(track.duration);
-                        selected: UI.track-index == i; chevron: false;
-                        activated => { UI.play(i); UI.sheet = Sheet.none; }
+                    for track[i] in AppBridge.queue : HorizontalLayout {
+                        Row {
+                            title: track.title; sub: track.artist; art: track.cover;
+                            detail: track.duration-label; chevron: false; horizontal-stretch: 1;
+                            activated => { AppBridge.queue-action("jump", AppBridge.queue-ids[i]); UI.sheet = Sheet.none; }
+                        }
+                        if i > 0 : Action {
+                            size: 32px; title: "Mover para cima"; glyph: @image-url("assets/chev.svg");
+                            activated => { AppBridge.queue-action("move", AppBridge.queue-ids[i]); }
+                        }
+                        Action {
+                            size: 32px; title: "Remover da fila"; glyph: @image-url("assets/close.svg");
+                            activated => { AppBridge.queue-action("remove", AppBridge.queue-ids[i]); }
+                        }
+                    }
+                }
+            }
+            if root.content == Sheet.sleep : VerticalLayout {
+                alignment: start; spacing: 4px;
+                for minutes in [0, 15, 30, 60] : Row {
+                    title: minutes == 0 ? "Desativar" : "\{minutes} min";
+                    checked: AppBridge.sleep-minutes == minutes;
+                    activated => { AppBridge.sleep-timer(minutes); UI.sheet = Sheet.none; }
+                }
+            }
+            if root.content == Sheet.outputs : ScrollView {
+                vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    Ink { text: AppBridge.output-name; color: UI.palette.muted; }
+                    if AppBridge.bit-perfect : Ink { text: "Sem reamostragem ou DSP no motor"; color: UI.palette.muted; }
+                    for output in AppBridge.outputs : Row {
+                        title: output.title;
+                        activated => { AppBridge.select-output(output.id); UI.sheet = Sheet.none; }
+                    }
+                }
+            }
+            if root.content == Sheet.playlist-create || root.content == Sheet.playlist-rename : VerticalLayout {
+                alignment: start; spacing: 8px;
+                SearchField { value <=> UI.playlist-name; hint: "Nome da playlist"; }
+                Pill {
+                    title: "Salvar";
+                    activated => {
+                        if (!UI.playlist-name.is-empty) {
+                            if (root.content == Sheet.playlist-create) { AppBridge.create-playlist(UI.playlist-name); }
+                            else { AppBridge.rename-playlist(UI.playlist-name); }
+                            UI.sheet = Sheet.none;
+                        }
+                    }
+                }
+            }
+            if root.content == Sheet.playlist-delete : VerticalLayout {
+                alignment: start; spacing: 8px;
+                Ink { text: AppBridge.detail-title; font-weight: 800; }
+                Pill { title: "Excluir"; activated => { AppBridge.delete-playlist(); UI.sheet = Sheet.none; } }
+            }
+            if root.content == Sheet.playlist-add : ScrollView {
+                vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    for playlist in AppBridge.playlists : VerticalLayout {
+                        if playlist.kind == "playlist" : Row {
+                            title: playlist.title; sub: playlist.sub;
+                            activated => { AppBridge.add-now-to-playlist(playlist.id); UI.sheet = Sheet.none; }
+                        }
+                    }
+                }
+            }
+            if root.content == Sheet.metadata : ScrollView {
+                vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    spacing: 6px;
+                    SearchField { value <=> UI.metadata-title; hint: "Título"; }
+                    SearchField { value <=> UI.metadata-artist; hint: "Artista"; }
+                    SearchField { value <=> UI.metadata-album; hint: "Álbum"; }
+                    SearchField { value <=> UI.metadata-genre; hint: "Gênero"; }
+                    Pill {
+                        title: "Salvar";
+                        activated => {
+                            if (!UI.metadata-title.is-empty) {
+                                AppBridge.edit-tags(UI.metadata-id, UI.metadata-title, UI.metadata-artist, UI.metadata-album, UI.metadata-genre);
+                                UI.sheet = Sheet.none;
+                            }
+                        }
                     }
                 }
             }
@@ -568,15 +656,23 @@ export component PlayerSheet inherits Rectangle {
                         padding: 3px; spacing: 3px;
                         for label[i] in ["Só disco", "Capa + disco", "Só capa"] : Pill {
                             title: label; selected: UI.vinyl-mode == i; inverse: true; horizontal-stretch: 1;
-                            activated => { UI.vinyl-mode = i; }
+                            activated => { AppBridge.setting("vinyl", i); }
                         }
                     }
                 }
-                for label[i] in ["Adicionar à playlist", "Ver álbum", "Equalizador"] : Row {
-                    title: label;
-                    glyph: [@image-url("assets/plus.svg"), @image-url("assets/library.svg"), @image-url("assets/gauge.svg")][i];
-                    activated => { UI.sheet = Sheet.none; UI.soon(); }
+                Row {
+                    title: "Adicionar à playlist"; glyph: @image-url("assets/plus.svg");
+                    activated => { UI.sheet = Sheet.playlist-add; }
                 }
+                if AppBridge.has-now && !UI.track.local : Row {
+                    title: "Assistir vídeo"; glyph: @image-url("assets/video.svg");
+                    activated => { UI.sheet = Sheet.none; AppBridge.watch-now(); }
+                }
+                Row {
+                    title: "Compartilhar música"; glyph: @image-url("assets/share.svg");
+                    activated => { UI.sheet = Sheet.none; AppBridge.share-now(); }
+                }
+
             }
         }
         drag := TouchArea {

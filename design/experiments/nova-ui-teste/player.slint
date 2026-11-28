@@ -38,7 +38,7 @@ export component BottomIsland inherits Rectangle {
     in property <length> right-inset;
     in property <bool> shared-cover;
     private property <length> cover-inset: 10px;
-    private property <length> mini-offset: 17px;
+    private property <length> mini-offset: 31px;
     out property <length> cover-x: (self.width - self.inner-width + self.left-inset - self.right-inset) / 2 + self.cover-inset;
     out property <length> cover-y: self.mini-offset + 11px;
     property <length> inner-width: min(550px, self.width - left-inset - right-inset - 20px);
@@ -145,7 +145,7 @@ export component BottomIsland inherits Rectangle {
         property <length> search-size: 50px;
         property <length> gap: 14px;
         x: (parent.width - self.width + root.left-inset - root.right-inset) / 2;
-        y: 82px;
+        y: 96px;
         width: min(root.inner-width, 264px);
         height: 56px;
 
@@ -377,6 +377,8 @@ export component Player inherits Rectangle {
     private property <length> play-row: max(48px, root.play-size + 4px);
     private property <length> stage-size: max(110px, min(root.width - root.left-inset - root.right-inset - 36px, root.usable - root.controls-height - 130px, 440px));
     background: UI.dark ? UI.track.tint : UI.palette.player;
+    border-top-left-radius: 24px;
+    border-top-right-radius: 24px;
 
     if !UI.battery : Rectangle {
         background: @radial-gradient(circle, UI.track.art.with-alpha(UI.dark ? 0.34 : 0.20), transparent 68%);

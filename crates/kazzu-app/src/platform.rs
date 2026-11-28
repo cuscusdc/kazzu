@@ -13,7 +13,12 @@ fn read_reduce_motion() -> Option<bool> {
     parse_gsettings_bool(&String::from_utf8_lossy(&out.stdout)).map(|animations| !animations)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "android")]
+fn read_reduce_motion() -> Option<bool> {
+    crate::android::prefers_reduced_motion()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn read_reduce_motion() -> Option<bool> {
     None
 }

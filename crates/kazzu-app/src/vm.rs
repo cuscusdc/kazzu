@@ -132,6 +132,8 @@ pub struct ExploreVm {
 
 #[derive(Clone, Default)]
 pub struct LibraryVm {
+    #[cfg(target_os = "android")]
+    pub genres: Vec<String>,
     pub listening_summary: String,
     pub albums: Vec<AlbumVm>,
     pub artists: Vec<ArtistVm>,
@@ -157,6 +159,8 @@ pub enum DetailKindVm {
 
 #[derive(Clone, Default)]
 pub struct DetailVm {
+    #[cfg(target_os = "android")]
+    pub cached_audio: bool,
     pub editable_playlist: String,
     pub description: String,
     pub related: Vec<HighlightVm>,

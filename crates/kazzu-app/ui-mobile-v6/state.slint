@@ -1,7 +1,8 @@
-import { Demo, Track, Scheme } from "data.slint";
+import { AppBridge } from "app-bridge.slint";
+import { Design, Track, Scheme } from "data.slint";
 
 export enum Screen { home, explore, library, search, replay, settings, settings-page, appearance }
-export enum Sheet { none, queue, more }
+export enum Sheet { none, queue, more, sleep, outputs, playlist-create, playlist-rename, playlist-delete, playlist-add, metadata }
 
 struct Route { screen: Screen, page: int }
 
@@ -13,18 +14,19 @@ export global UI {
     in-out property <bool> mini-hidden;
     in-out property <Sheet> sheet: Sheet.none;
     in-out property <bool> lyrics;
-    in-out property <int> vinyl-mode;
-    in-out property <int> track-index;
-    out property <Track> track: Demo.tracks[root.track-index];
-    in-out property <int> position;
-    out property <float> progress: root.position / max(1, root.track.duration);
-    in-out property <bool> playing;
-    in-out property <bool> shuffle;
-    in-out property <bool> repeat;
-    in-out property <float> volume: 70;
-    private property <float> last-volume: 70;
-    in-out property <bool> liked;
-    in-out property <int> replay-period: 3;
+    out property <int> vinyl-mode: AppBridge.vinyl;
+    out property <int> effects: AppBridge.effects;
+    out property <bool> rounded: AppBridge.rounded;
+    out property <bool> reduced-glass: AppBridge.reduce-transparency;
+    out property <Track> track: AppBridge.now;
+    out property <float> progress: AppBridge.progress;
+    out property <bool> playing: AppBridge.playing;
+    out property <bool> shuffle: AppBridge.shuffle;
+    out property <bool> repeat: AppBridge.repeat;
+    out property <float> volume: AppBridge.volume;
+    private property <float> last-volume: 0.7;
+    out property <bool> liked: AppBridge.liked;
+    in-out property <int> replay-period: 4;
     in-out property <int> artist-page;
     in-out property <int> suggest-page;
     in-out property <int> discovery-index;
@@ -34,20 +36,34 @@ export global UI {
     in-out property <float> spin;
     in-out property <float> platter-spin;
     in-out property <int> search-source;
+    in-out property <int> home-feed;
+    in-out property <string> playlist-name;
+    in-out property <string> metadata-id;
+    in-out property <string> metadata-title;
+    in-out property <string> metadata-artist;
+    in-out property <string> metadata-album;
+    in-out property <string> metadata-genre;
     in-out property <string> query;
-    in-out property <bool> recent: true;
     in-out property <string> settings-query;
     in-out property <string> toast-text;
+    in-out property <string> toast-action;
     in-out property <int> toast-ms;
     in-out property <[bool]> toggles: [true, true, true, true, true, true, true, true, true, true, false, true, true, true, true];
     in-out property <[int]> radios: [0, 0, 0, 2, 1, 0];
-    in-out property <[float]> glass: [45, 24, 48, 107, 36];
-    out property <bool> dark: root.toggles[1];
-    out property <bool> motion: root.toggles[3] && root.radios[4] > 0;
-    out property <bool> battery: root.radios[4] == 0;
-    out property <Scheme> palette: Demo.schemes[(root.dark ? 0 : 9) + (root.toggles[0] ? root.track-index : 8)];
-    out property <length> card-radius: root.toggles[2] ? 28px : 18px;
-    out property <length> tile-radius: root.toggles[2] ? 20px : 14px;
+    out property <[float]> glass: AppBridge.glass;
+    out property <bool> dark: AppBridge.dark;
+    out property <bool> motion: AppBridge.app-visible && !AppBridge.reduce-motion && root.effects > 0;
+    out property <bool> battery: root.effects == 0;
+    private property <Scheme> base: Design.schemes[(root.dark ? 0 : 9) + 8];
+    out property <Scheme> palette: {
+        bg: root.base.bg, player: root.base.player, card: root.base.card,
+        high: root.base.high, ink: root.base.ink, muted: root.base.muted,
+        outline: root.base.outline, accent: root.dark ? AppBridge.dark-accent : AppBridge.light-accent,
+        on-accent: root.dark ? AppBridge.dark-ink : AppBridge.light-ink,
+        secondary: root.base.secondary, selected: root.base.selected
+    };
+    out property <length> card-radius: root.rounded ? 28px : 18px;
+    out property <length> tile-radius: root.rounded ? 20px : 14px;
 
     public function navigate(target: Screen, target-page: int) {
         if (root.screen != target || (target == Screen.settings-page && root.page != target-page)) {
@@ -62,6 +78,8 @@ export global UI {
             root.sheet = Sheet.none;
         } else if (root.player-open) {
             root.player-open = false;
+        } else if (AppBridge.detail-open) {
+            AppBridge.close-detail();
         } else if (root.history.length > 0) {
             root.page = root.history[root.history.length - 1].page;
             root.screen = root.history[root.history.length - 1].screen;
@@ -71,70 +89,51 @@ export global UI {
         }
     }
 
-    public function play(index: int) {
-        root.mini-hidden = false;
-        root.start-track(index);
+    public function play(id: string) {
+        if (!id.is-empty) {
+            root.mini-hidden = false;
+            AppBridge.play-track(id);
+        }
     }
 
-    function start-track(index: int) {
-        root.track-index = index;
-        root.position = 0;
-        root.playing = true;
-    }
+    public function next() { AppBridge.next(); }
+    public function previous() { AppBridge.previous(); }
 
-    public function random-track() {
-        // A different demo track on each selection, using the elapsed app time as a seed.
-        root.play(root.random-index());
-    }
-
-    function random-index() -> int {
-        return mod(root.track-index + 1 + mod(floor(animation-tick() / 1ms), Demo.tracks.length - 1), Demo.tracks.length);
-    }
-
-    function next-index() -> int {
-        return root.shuffle ? root.random-index() : mod(root.track-index + 1, Demo.tracks.length);
-    }
-
-    public function next() {
-        root.play(root.next-index());
-    }
-
-    public function previous() {
-        if (root.position > 4) { root.position = 0; }
-        else { root.play(mod(root.track-index + Demo.tracks.length - 1, Demo.tracks.length)); }
+    public function edit-tags(track: Track) {
+        root.metadata-id = track.id;
+        root.metadata-title = track.title;
+        root.metadata-artist = track.artist;
+        root.metadata-album = track.album;
+        root.metadata-genre = "";
+        root.sheet = Sheet.metadata;
     }
 
     public function mute() {
-        if (root.volume > 0) { root.last-volume = root.volume; root.volume = 0; }
-        else { root.volume = root.last-volume; }
-    }
-
-    public function tick() {
-        if (root.playing) {
-            if (root.position + 1 < root.track.duration) { root.position += 1; }
-            else if (root.repeat) { root.position = 0; }
-            else { root.start-track(root.next-index()); }
-        }
+        if (root.volume > 0) {
+            root.last-volume = root.volume;
+            AppBridge.set-volume(0);
+        } else { AppBridge.set-volume(root.last-volume); }
     }
 
     public function toast(message: string) {
         root.toast-text = message;
+        root.toast-action = "";
         root.toast-ms = 2200;
     }
 
     public function soon() { root.toast("Em breve nesta versão"); }
 
-    public function clear-search() {
-        root.recent = false;
-        root.toast("Histórico de buscas apagado");
-    }
-
     public function setting-action(action: string, target: int) {
         if (target == -2) { root.navigate(Screen.appearance, 0); }
         else if (target >= 0) { root.navigate(Screen.settings-page, target); }
-        else if (action == "clearSearchHistory") { root.clear-search(); }
-        else if (action == "scanLibrary") { root.toast("Biblioteca atualizada: 742 músicas locais"); }
-        else if (action == "clearCache") { root.toast("Cache limpo com sucesso"); }
+        else { AppBridge.setting(action, 0); }
+    }
+
+    public function toggle(index: int) {
+        if (index == 0) { AppBridge.setting("cover", AppBridge.cover-theme ? 0 : 1); }
+        else if (index == 1) { AppBridge.setting("dark", root.dark ? 0 : 1); }
+        else if (index == 3) { AppBridge.setting("motion", root.motion ? 0 : 1); }
+        else if (index == 2) { AppBridge.setting("rounded", root.rounded ? 0 : 1); }
         else { root.soon(); }
     }
 
@@ -153,7 +152,6 @@ export global UI {
         if (!root.motion) {
             root.finish-record();
         } else if (root.placed-record >= 0) {
-            if (root.track-index == root.placed-record) { root.playing = false; }
             root.record-phase = 3;
         } else {
             root.record-phase = 1;
@@ -161,9 +159,8 @@ export global UI {
     }
 
     public function finish-record() {
-        if (root.placed-record != root.pending-record && root.track-index == root.placed-record) { root.playing = false; }
         root.placed-record = root.pending-record;
-        if (root.placed-record >= 0) { root.play(root.placed-record); }
+        if (root.placed-record >= 0) { root.play(AppBridge.trending[root.placed-record].id); }
         root.record-phase = 0;
     }
 }

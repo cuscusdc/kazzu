@@ -171,6 +171,10 @@ impl Link {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.lock().cancelled
+    }
+
     /// Stops the downloader and wakes a blocked reader.
     pub fn cancel(&self) {
         self.lock().cancelled = true;

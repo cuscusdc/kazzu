@@ -9,4 +9,4 @@
 
 **Exemplo integrado de escrita.** Em Editar playlist, mover uma faixa envia posição visível e ID ao worker. O worker consulta a playlist unificada, verifica o item, usa reorder_playlist e publica PlaylistEdited. O controlador recarrega a visita corrente somente se a playlist ainda estiver em exibição. A biblioteca recebe um snapshot atualizado.
 
-A matriz de entrega está em [progresso](IMPLEMENTATION_PROGRESS.md). As capacidades ainda sem fornecedor e o alcance dos testes estão em [limitações](KNOWN_LIMITATIONS.md) e [validação](TEST_REPORT.md).
+A matriz de entrega está em [progresso](IMPLEMENTATION_PROGRESS.md). As capacidades ainda sem fornecedor e o alcance dos testes estão em [limitações](KNOWN_LIMITATIONS.md) e [validação](../tests/TEST_REPORT.md).

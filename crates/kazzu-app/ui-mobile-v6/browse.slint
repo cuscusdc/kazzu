@@ -1,6 +1,7 @@
+import { AppBridge } from "app-bridge.slint";
 import { ScrollView } from "std-widgets.slint";
-import { Demo, Tile } from "data.slint";
-import { UI, Screen } from "state.slint";
+import { Tile } from "data.slint";
+import { UI, Screen, Sheet } from "state.slint";
 import { Ink, Icon, Glass, Action, Pill, Artwork, Section, Row, Vinyl } from "components.slint";
 
 export component Header inherits VerticalLayout {
@@ -92,6 +93,7 @@ export component Header inherits VerticalLayout {
 export component SearchField inherits Rectangle {
     in-out property <string> value;
     in property <string> hint;
+    in property <bool> secret;
     min-height: 48px;
     background: UI.palette.card;
     border-width: 1px;
@@ -116,7 +118,8 @@ export component SearchField inherits Rectangle {
         vertical-alignment: center;
         accessible-role: text-input;
         accessible-label: root.hint;
-        accessible-value <=> root.value;
+        input-type: root.secret ? InputType.password : InputType.text;
+        accessible-value: root.secret ? "" : root.value;
     }
     if !root.value.is-empty : Action {
         x: parent.width - 44px; width: 44px;
@@ -129,41 +132,41 @@ component DiscRail inherits ScrollView {
     in property <[Tile]> tiles;
     in property <bool> music;
     height: 201px;
-    content-width: 474px;
+    content-width: root.music ? min(3, AppBridge.recents.length) * 162px : root.tiles.length * 162px;
     content-height: self.height;
     horizontal-scrollbar-policy: always-off;
     vertical-scrollbar-policy: always-off;
     HorizontalLayout {
         x: 0;
         y: 0;
-        width: 474px;
+        width: root.content-width;
         alignment: start;
         spacing: 12px;
-        for entry[i] in 3 : Rectangle {
+        for entry[i] in (root.music ? min(3, AppBridge.recents.length) : root.tiles.length) : Rectangle {
             property <Tile> item: root.tiles[i];
             width: 150px;
             height: 199px;
             accessible-role: button;
-            accessible-label: root.music ? Demo.tracks[i].title : self.item.title;
+            accessible-label: root.music ? AppBridge.recents[i].title : self.item.title;
             accessible-action-default => { root.choose(i); }
             VerticalLayout {
                 spacing: 4px;
                 alignment: start;
                 Artwork {
                     height: 150px;
-                    art: root.music ? Demo.tracks[i].cover : item.cover;
+                    art: root.music ? AppBridge.recents[i].cover : item.cover;
                     tone: item.tone;
                     glyph: item.glyph;
                 }
-                Ink { text: root.music ? Demo.tracks[i].title : item.title; font-weight: 800; }
-                Ink { text: root.music ? Demo.tracks[i].artist + " • " + Demo.tracks[i].album : item.sub; color: UI.palette.muted; font-size: 12px; }
+                Ink { text: root.music ? AppBridge.recents[i].title : item.title; font-weight: 800; }
+                Ink { text: root.music ? AppBridge.recents[i].artist + " • " + AppBridge.trending[i].album : item.sub; color: UI.palette.muted; font-size: 12px; }
             }
             TouchArea { clicked => { root.choose(i); } }
         }
     }
 
     function choose(index: int) {
-        if (root.music) { UI.play(index); } else { UI.soon(); }
+        if (root.music) { UI.play(AppBridge.recents[index].id); } else { AppBridge.open-item(root.tiles[index].kind, root.tiles[index].id); }
     }
 }
 
@@ -211,17 +214,18 @@ export component Home inherits VerticalLayout {
         content-height: self.height;
         HorizontalLayout {
             x: 0; width: 298px; spacing: 6px; alignment: start;
-            for chip[i] in ["Tudo", "Playlists", "Músicas", "Podcasts"] : Pill {
-                title: chip; selected: i == 0; height: 32px; side-padding: root.width < 330px ? 9px : 12px;
-                activated => { if (i > 0) { UI.soon(); } }
+            for chip[i] in ["Tudo", "Mixes", "Descobrir"] : Pill {
+                title: chip; selected: i == UI.home-feed; height: 32px; side-padding: root.width < 330px ? 9px : 12px;
+                activated => { UI.home-feed = i; AppBridge.home-feed(i); }
             }
         }
     }
+    Rectangle { height: 4px; }
     Section { title: "Suas playlists"; link: "Ver tudo"; activated => { UI.navigate(Screen.library, 0); } }
     Rectangle {
-        height: 184px;
-        for cell[i] in 6 : Rectangle {
-            property <Tile> tile: i < 3 ? Demo.playlists[i] : Demo.suggested[i - 3];
+        height: ceil(min(6, AppBridge.playlists.length) / 2) * 64px;
+        for tile[i] in AppBridge.playlists : Rectangle {
+            visible: i < 6;
             x: mod(i, 2) * (parent.width + 8px) / 2;
             y: floor(i / 2) * 64px;
             width: (parent.width - 8px) / 2;
@@ -230,19 +234,18 @@ export component Home inherits VerticalLayout {
             background: tap.pressed ? UI.palette.high : UI.palette.card.with-alpha(0.88);
             clip: true;
             accessible-role: button;
-            accessible-label: self.tile.title;
-            accessible-action-default => { UI.soon(); }
-            Artwork { x: 0; width: 56px; height: 56px; tone: tile.tone; glyph: tile.glyph; border-radius: 0px; }
+            accessible-label: tile.title;
+            accessible-action-default => { AppBridge.open-item(tile.kind, tile.id); }
+            Artwork { x: 0; width: 56px; height: 56px; art: tile.cover; tone: tile.tone; glyph: tile.glyph; border-radius: 0px; }
             Ink { x: 64px; width: parent.width - 72px; text: tile.title; vertical-alignment: center; height: parent.height; font-weight: 750; wrap: word-wrap; }
-            tap := TouchArea { clicked => { UI.soon(); } }
+            tap := TouchArea { clicked => { AppBridge.open-item(tile.kind, tile.id); } }
         }
     }
-    Rectangle { height: 4px; }
     Section { title: "Escolha rápida"; link: "Ver tudo"; activated => { UI.navigate(Screen.explore, 0); } }
     Rectangle {
-        height: self.width;
-        for tile[i] in 9 : Rectangle {
-            property <string> name: i < 8 ? Demo.tracks[i].title : "Aleatório";
+        height: ceil(min(9, AppBridge.quick-picks.length) / 3) * ((self.width - 20px) / 3 + 10px);
+        for tile[i] in min(9, AppBridge.quick-picks.length) : Rectangle {
+            property <string> name: AppBridge.quick-picks[i].title;
             x: mod(i, 3) * (parent.width + 10px) / 3;
             y: floor(i / 3) * (self.width + 10px);
             width: (parent.width - 20px) / 3;
@@ -251,31 +254,32 @@ export component Home inherits VerticalLayout {
             background: UI.palette.card;
             accessible-role: button;
             accessible-label: self.name;
-            accessible-action-default => { if (i < 8) { UI.play(i); } else { UI.random-track(); } }
-            if i < 8 : Artwork { art: Demo.tracks[i].cover; }
-            if i == 8 : Icon { y: parent.height * 0.25; width: 32px; height: 32px; source: @image-url("assets/shuffle.svg"); }
+            accessible-action-default => { UI.play(AppBridge.quick-picks[i].id); }
+            Artwork { art: AppBridge.quick-picks[i].cover; }
             Rectangle {
                 x: 6px; y: parent.height - 29px;
                 width: parent.width - 12px; height: 23px;
                 border-radius: 12px; background: #00000099;
                 Ink { x: 6px; width: parent.width - 12px; color: white; text: name; font-size: 12px; font-weight: 750; horizontal-alignment: center; vertical-alignment: center; }
             }
-            TouchArea { clicked => { if (i < 8) { UI.play(i); } else { UI.random-track(); } } }
+            TouchArea { clicked => { UI.play(AppBridge.quick-picks[i].id); } }
         }
     }
     Rectangle { height: 4px; }
+
+    if AppBridge.home-loading : Ink { text: "Carregando…"; color: UI.palette.muted; }
     Section { title: "Artistas"; }
-    PageSlide {
+    if AppBridge.artists.length > 0 : PageSlide {
         page: UI.artist-page;
         height: (root.width - 24px) / 3 + 41px;
         HorizontalLayout {
             spacing: 12px;
-            for artist in 3 : Rectangle {
-                property <Tile> item: Demo.artists[mod(UI.artist-page * 3 + artist, Demo.artists.length)];
+            for artist in min(3, AppBridge.artists.length) : Rectangle {
+                property <Tile> item: AppBridge.artists[mod(UI.artist-page * 3 + artist, max(1, AppBridge.artists.length))];
                 horizontal-stretch: 1;
                 accessible-role: button;
                 accessible-label: self.item.title;
-                accessible-action-default => { UI.soon(); }
+                accessible-action-default => { AppBridge.open-item(item.kind, item.id); }
                 VerticalLayout {
                     alignment: start;
                     spacing: 3px;
@@ -283,23 +287,27 @@ export component Home inherits VerticalLayout {
                     Ink { text: item.title; font-weight: 800; }
                     Ink { text: item.sub; color: UI.palette.muted; font-size: 12px; }
                 }
-                TouchArea { clicked => { UI.soon(); } }
+                TouchArea { clicked => { AppBridge.open-item(item.kind, item.id); } }
             }
         }
     }
-    Pager { page: UI.artist-page; move(dir) => { UI.artist-page += dir; } }
+    if AppBridge.artists.length > 3 : Pager {
+        page: UI.artist-page;
+        move(dir) => { UI.artist-page = max(0, UI.artist-page + dir); }
+    }
+
 }
 
 component Turntable inherits Rectangle {
     height: 312px;
     private property <int> selected: UI.discovery-index;
-    private property <bool> on: UI.placed-record >= 0 && UI.track-index == UI.placed-record && UI.playing;
+    private property <bool> on: UI.placed-record >= 0 && AppBridge.trending[UI.placed-record].id == UI.track.id && UI.playing;
     private property <bool> in-flight: UI.record-phase == 2 || UI.record-phase == 4;
     private property <length> platter-x: (root.width - 230px) / 2 + 20px;
 
     Rectangle {
         x: 0; y: 0; width: parent.width; height: 111px; clip: true;
-        for track[i] in Demo.tracks : Rectangle {
+        for track[i] in AppBridge.trending : Rectangle {
             property <bool> centered: i == root.selected;
             property <length> offset: (i - root.selected) * 146px;
             x: (parent.width - self.width) / 2 + self.offset;
@@ -325,18 +333,18 @@ component Turntable inherits Rectangle {
             changed pressed => {
                 if (self.pressed) { self.start = self.mouse-x; }
                 else if (abs(self.mouse-x - self.start) > 30px && UI.record-phase == 0) {
-                    UI.discovery-index = clamp(UI.discovery-index + (self.mouse-x < self.start ? 1 : -1), 0, Demo.tracks.length - 1);
+                    UI.discovery-index = clamp(UI.discovery-index + (self.mouse-x < self.start ? 1 : -1), 0, AppBridge.trending.length - 1);
                 }
             }
             clicked => {
                 if (abs(self.mouse-x - self.start) <= 30px) {
-                    UI.select-record(clamp(UI.discovery-index + round((self.mouse-x - self.width / 2) / 146px), 0, Demo.tracks.length - 1));
+                    UI.select-record(clamp(UI.discovery-index + round((self.mouse-x - self.width / 2) / 146px), 0, AppBridge.trending.length - 1));
                 }
             }
         }
     }
-    Ink { y: 117px; width: parent.width; text: Demo.tracks[root.selected].title; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
-    Ink { y: 140px; width: parent.width; text: Demo.tracks[root.selected].artist; color: UI.palette.muted; horizontal-alignment: center; }
+    Ink { y: 117px; width: parent.width; text: AppBridge.trending[root.selected].title; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
+    Ink { y: 140px; width: parent.width; text: AppBridge.trending[root.selected].artist; color: UI.palette.muted; horizontal-alignment: center; }
     Rectangle {
         y: 165px; width: 230px; height: 150px;
         border-radius: 18px; background: #18181d;
@@ -361,7 +369,7 @@ component Turntable inherits Rectangle {
                     }
                 }
                 if UI.placed-record >= 0 && UI.record-phase != 4 : Vinyl {
-                    width: 92px; height: 92px; art: Demo.tracks[max(0, UI.placed-record)].cover; turns: UI.platter-spin;
+                    width: 92px; height: 92px; art: AppBridge.trending[max(0, UI.placed-record)].cover; turns: UI.platter-spin;
                 }
                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: @linear-gradient(135deg, #ffffff, #666673); }
                 TouchArea { clicked => { root.toggle(); } }
@@ -397,15 +405,15 @@ component Turntable inherits Rectangle {
             easing: cubic-bezier(0.45, 0.05, 0.2, 1);
         }
         Vinyl {
-            art: Demo.tracks[max(0, UI.record-phase >= 3 ? UI.placed-record : UI.pending-record)].cover;
+            art: AppBridge.trending[max(0, UI.record-phase >= 3 ? UI.placed-record : UI.pending-record)].cover;
             turns: parent.travel;
         }
     }
 
     function toggle() {
         if (UI.placed-record >= 0 && UI.record-phase == 0) {
-            if (UI.track-index == UI.placed-record) { UI.playing = !UI.playing; }
-            else { UI.play(UI.placed-record); }
+            if (AppBridge.trending[UI.placed-record].id == UI.track.id) { AppBridge.toggle-play(); }
+            else { UI.play(AppBridge.trending[UI.placed-record].id); }
         }
     }
 }
@@ -418,10 +426,10 @@ export component Explore inherits VerticalLayout {
     PageSlide {
         page: UI.suggest-page;
         height: 168px;
-        for slot in 6 : Rectangle {
-            property <int> song: mod(UI.suggest-page * 6 + slot + 3, Demo.tracks.length);
-            property <image> cover: Demo.tracks[self.song].cover;
-            property <string> song-title: Demo.tracks[self.song].title;
+        for slot in min(6, AppBridge.trending.length) : Rectangle {
+            property <int> song: mod(UI.suggest-page * 6 + slot + 3, max(1, AppBridge.trending.length));
+            property <image> cover: AppBridge.trending[self.song].cover;
+            property <string> song-title: AppBridge.trending[self.song].title;
             x: mod(slot, 2) * (parent.width + 10px) / 2;
             y: floor(slot / 2) * 60px;
             width: (parent.width - 10px) / 2;
@@ -431,15 +439,15 @@ export component Explore inherits VerticalLayout {
             background: touch.pressed ? UI.palette.high : UI.palette.card.with-alpha(0.88);
             accessible-role: button;
             accessible-label: self.song-title;
-            accessible-action-default => { UI.play(song); }
+            accessible-action-default => { UI.play(AppBridge.trending[song].id); }
             Artwork { x: 0; width: 48px; height: 48px; art: cover; border-radius: 0px; }
             VerticalLayout {
                 x: 54px; width: parent.width - 60px;
                 spacing: 2px; alignment: center;
                 Ink { text: song-title; font-size: 13px; font-weight: 750; }
-                Ink { text: Demo.tracks[song].artist; color: UI.palette.muted; font-size: 11px; }
+                Ink { text: AppBridge.trending[song].artist; color: UI.palette.muted; font-size: 11px; }
             }
-            touch := TouchArea { clicked => { UI.play(song); } }
+            touch := TouchArea { clicked => { UI.play(AppBridge.trending[song].id); } }
         }
     }
     Pager { page: UI.suggest-page; move(dir) => { UI.suggest-page += dir; } }
@@ -458,19 +466,25 @@ export component Explore inherits VerticalLayout {
                 chevron: false;
                 activated => { root.show-turntable = !root.show-turntable; }
             }
-            if root.show-turntable : VerticalLayout {
+            if root.show-turntable && AppBridge.trending.length > 0 : VerticalLayout {
                 padding-top: 12px;
                 padding-bottom: 14px;
                 Turntable {}
             }
         }
     }
+
+    if AppBridge.explore-loading : Ink { text: "Carregando…"; color: UI.palette.muted; }
     Section { title: "Playlists sugeridas"; }
-    DiscRail { tiles: Demo.suggested; }
+    Row { title: "Meu mix de curtidas"; glyph: @image-url("assets/shuffle.svg"); activated => { AppBridge.open-item("favorite-mix", ""); } }
+    Section { title: "Novos lançamentos"; }
+    DiscRail { tiles: AppBridge.new-releases; }
+    DiscRail { tiles: AppBridge.suggestions; }
     Section { title: "Categorias"; }
     Rectangle {
-        height: 172px + 5 * 160px;
-        for category[i] in Demo.categories : Rectangle {
+        height: AppBridge.categories.length == 0 ? 0px :
+            172px + ceil((AppBridge.categories.length - 1) / 2) * 160px;
+        for category[i] in AppBridge.categories : Rectangle {
             x: i == 0 ? 0px : mod(i - 1, 2) * (parent.width + 10px) / 2;
             y: i == 0 ? 0px : 182px + floor((i - 1) / 2) * 160px;
             width: i == 0 ? parent.width : (parent.width - 10px) / 2;
@@ -482,47 +496,66 @@ export component Explore inherits VerticalLayout {
             Artwork {
                 x: parent.width * 0.59; y: parent.height * 0.47;
                 width: min(116px, parent.width * 0.44); height: self.width;
-                art: Demo.tracks[category.track-index].cover; border-radius: 10px; transform-rotation: 15deg;
+                art: category.cover; border-radius: 10px; transform-rotation: 15deg;
             }
             Ink { x: 13px; y: 13px; width: parent.width - 26px; text: category.title; color: white; font-size: 16px; font-weight: 800; wrap: word-wrap; }
-            accessible-role: button;
-            accessible-label: category.title;
-            accessible-action-default => { UI.play(category.track-index); }
-            TouchArea { clicked => { UI.play(category.track-index); } }
+            accessible-role: button; accessible-label: category.title;
+            accessible-action-default => { AppBridge.open-item(category.kind, category.id); }
+            TouchArea { clicked => { AppBridge.open-item(category.kind, category.id); } }
         }
     }
+
 }
 
 export component Library inherits VerticalLayout {
     spacing: 10px;
     Header { title: "Biblioteca"; }
-    Section { title: "Continue ouvindo"; link: "Histórico"; activated => { UI.soon(); } }
+    Section { title: "Continue ouvindo"; link: "Histórico"; activated => { AppBridge.open-item("history", ""); } }
     DiscRail { music: true; }
+    if AppBridge.library-loading : Ink { text: "Carregando…"; color: UI.palette.muted; }
     VerticalLayout {
         spacing: 2px;
-        Row { title: "Downloads"; glyph: @image-url("assets/download.svg"); activated => { UI.soon(); } }
-        Row { title: "Música local"; glyph: @image-url("assets/folder.svg"); activated => { UI.soon(); } }
-        Row { title: "Nova playlist"; glyph: @image-url("assets/plus.svg"); activated => { UI.soon(); } }
+        Row { title: "Áudio em cache"; glyph: @image-url("assets/download.svg"); activated => { AppBridge.open-item("downloads", ""); } }
+        Row { title: "Música local"; glyph: @image-url("assets/folder.svg"); activated => { UI.navigate(Screen.settings-page, 12); } }
+        Row { title: "Nova playlist"; glyph: @image-url("assets/plus.svg"); activated => { UI.playlist-name = ""; UI.sheet = Sheet.playlist-create; } }
     }
     Rectangle { height: 4px; }
-    Section { title: "Playlists"; link: "Ver tudo"; activated => { UI.soon(); } }
-    DiscRail { tiles: Demo.playlists; }
+    Section { title: "Álbuns"; link: "Ver todos"; activated => { AppBridge.open-item("albums", ""); } }
+    DiscRail { tiles: AppBridge.library-albums; }
+    Section { title: "Artistas"; }
+    DiscRail { tiles: AppBridge.artists; }
+    Section { title: "Gêneros"; }
+    for genre in AppBridge.library-genres : Row {
+        title: genre; activated => { AppBridge.open-item("genre", genre); }
+    }
+    Row { title: "Todas as músicas"; activated => { AppBridge.open-item("songs", ""); } }
+    Section { title: "Playlists"; }
+    Row { title: "Adicionadas recentemente"; activated => { AppBridge.open-item("smart-recent", ""); } }
+    Row { title: "Ainda não ouvidas"; activated => { AppBridge.open-item("smart-unplayed", ""); } }
+    for playlist in AppBridge.playlists : Row {
+        title: playlist.title; sub: playlist.sub; art: playlist.cover;
+        activated => { AppBridge.open-item(playlist.kind, playlist.id); }
+    }
+
 }
 
 export component Replay inherits VerticalLayout {
     spacing: 11px;
     Header { title: "Replay"; back: true; }
-    Ink { text: ["Esta semana", "Este mês", "Este ano", "Todo o tempo"][UI.replay-period]; color: UI.palette.muted; font-size: 16px; }
+    Ink { text: ["Hoje", "Esta semana", "Este mês", "Este ano", "Todo o tempo"][UI.replay-period]; color: UI.palette.muted; font-size: 16px; }
     Rectangle {
         height: 42px; border-radius: 14px; background: UI.palette.card;
         HorizontalLayout {
             padding: 4px; spacing: 3px;
-            for period[i] in ["Semanal", "Mensal", "Anual", "Sempre"] : Pill {
+            for period[i] in ["Hoje", "Semana", "Mês", "Ano", "Sempre"] : Pill {
                 title: period; selected: i == UI.replay-period; inverse: true; horizontal-stretch: 1; side-padding: 7px;
-                activated => { UI.replay-period = i; }
+                activated => { UI.replay-period = i; AppBridge.listening-stats(i, false); }
             }
         }
     }
+
+    init => { AppBridge.listening-stats(UI.replay-period, false); }
+    if UI.replay-period == 3 && (AppBridge.top-songs.length > 0 || AppBridge.top-artists.length > 0) : AnnualReplay {}
     Rectangle {
         height: 206px; border-radius: UI.card-radius;
         background: @linear-gradient(145deg, UI.palette.selected, UI.palette.high);
@@ -530,52 +563,152 @@ export component Replay inherits VerticalLayout {
             padding: 18px; spacing: 4px;
             Ink { text: "SUA EXPERIÊNCIA DE ESCUTA"; font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
             Rectangle { vertical-stretch: 1; }
-            Ink { text: "694"; font-size: 52px; font-weight: 800; }
-            Ink { text: "MINUTOS OUVIDOS"; font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
+            Ink { text: AppBridge.listening-minutes; font-size: 52px; font-weight: 800; }
+            Ink { text: "MINUTOS OUVIDOS"; font-size: 11px; font-weight: 800; }
             Rectangle { vertical-stretch: 1; }
-            Ink { text: "cuscusdoce rael"; font-size: 15px; font-weight: 800; }
-            Ink { text: "170 reproduções · Todo o tempo"; font-size: 12px; color: UI.palette.muted; }
+            Ink { text: AppBridge.listening-plays; font-size: 12px; color: UI.palette.muted; }
         }
     }
-    Row { title: "Tocar seu Replay"; glyph: @image-url("assets/play.svg"); selected: true; activated => { UI.random-track(); } }
-    Section { title: "Músicas mais tocadas"; }
-    for track[i] in Demo.replay : HorizontalLayout {
+    Row {
+        title: "Exportar estatísticas"; glyph: @image-url("assets/share.svg");
+        activated => { AppBridge.listening-stats(UI.replay-period, true); }
+    }
+    RankList { heading: "Músicas mais ouvidas"; items: AppBridge.top-songs; }
+    RankList { heading: "Artistas mais ouvidos"; items: AppBridge.top-artists; }
+    RankList { heading: "Álbuns mais ouvidos"; items: AppBridge.top-albums; }
+    RankList { heading: "Gêneros favoritos"; items: AppBridge.top-genres; }
+
+}
+
+component AnnualReplay inherits VerticalLayout {
+    spacing: 6px;
+    private property <int> page;
+    Section { title: "Seu ano em música"; }
+    PageSlide {
+        page: root.page;
+        height: 152px;
+        Rectangle {
+            border-radius: UI.card-radius;
+            background: @linear-gradient(145deg, UI.palette.high, UI.palette.selected);
+            VerticalLayout {
+                padding: 18px;
+                spacing: 6px;
+                Ink {
+                    text: ["Faixa mais ouvida", "Artista mais ouvido", "Gênero favorito"][root.page];
+                    color: UI.palette.muted; font-size: 12px; font-weight: 750;
+                }
+                Ink {
+                    text: root.page == 0 && AppBridge.top-songs.length > 0 ? AppBridge.top-songs[0].title :
+                        root.page == 1 && AppBridge.top-artists.length > 0 ? AppBridge.top-artists[0].title :
+                        root.page == 2 && AppBridge.top-genres.length > 0 ? AppBridge.top-genres[0].title : "Sem dados no período";
+                    font-size: 24px; font-weight: 800; wrap: word-wrap;
+                }
+                Ink {
+                    text: root.page == 0 && AppBridge.top-songs.length > 0 ? AppBridge.top-songs[0].sub :
+                        root.page == 1 && AppBridge.top-artists.length > 0 ? AppBridge.top-artists[0].sub :
+                        root.page == 2 && AppBridge.top-genres.length > 0 ? AppBridge.top-genres[0].sub : "";
+                    color: UI.palette.muted; wrap: word-wrap;
+                }
+            }
+        }
+    }
+    Pager { page: root.page; move(dir) => { root.page = mod(root.page + dir + 3, 3); } }
+}
+
+component RankList inherits VerticalLayout {
+    in property <string> heading;
+    in property <[Tile]> items;
+    Section { title: root.heading; }
+    for item[i] in root.items : HorizontalLayout {
         spacing: 8px;
-        Ink { width: 20px; text: "\{i + 1}"; color: i == 0 ? #e5352b : UI.palette.muted; font-weight: 800; vertical-alignment: center; }
-        Row { title: track.title; sub: track.sub; detail: "\{track.plays}"; art: track.cover; chevron: false; activated => { UI.soon(); } }
+        Ink { width: 24px; text: "\{i + 1}"; color: UI.palette.muted; vertical-alignment: center; }
+        Row { title: item.title; sub: item.sub; interactive: false; chevron: false; }
     }
 }
 
 export component Search inherits VerticalLayout {
-    pure function matches-track(index: int) -> bool {
-        return UI.matches(Demo.tracks[index].title + " " + Demo.tracks[index].artist + " " + Demo.tracks[index].album, UI.query);
-    }
-    private property <bool> any-result: matches-track(0) || matches-track(1) || matches-track(2) || matches-track(3)
-        || matches-track(4) || matches-track(5) || matches-track(6) || matches-track(7);
-    SearchField { value <=> UI.query; hint: "Artistas, músicas ou letras..."; }
+    private property <string> query: UI.query;
+    changed query => { AppBridge.search(root.query); }
+    SearchField { value <=> UI.query; hint: "Artistas, músicas ou álbuns"; }
     Rectangle { height: 7px; }
     HorizontalLayout {
-        height: 42px;
-        spacing: 7px; alignment: start;
-        for source[i] in ["YouTube", "Biblioteca"] : Pill {
+        height: 42px; spacing: 7px; alignment: start;
+        for source[i] in ["Tudo", "YouTube", "Biblioteca"] : Pill {
             title: source; selected: i == UI.search-source;
-            activated => { UI.search-source = i; }
+            activated => { UI.search-source = i; AppBridge.search-source(i); }
         }
     }
     Section {
         title: UI.query.is-empty ? "Pesquisas recentes" : "Resultados";
-        link: UI.recent && UI.query.is-empty ? "Limpar" : "";
-        activated => { UI.clear-search(); }
+        link: UI.query.is-empty && AppBridge.recent-searches.length > 0 ? "Limpar" : "";
+        activated => { AppBridge.clear-search(); }
     }
-    for track[i] in Demo.tracks : VerticalLayout {
-        if (UI.query.is-empty ? (UI.recent && i < 2) : matches-track(i)) : VerticalLayout {
-            padding-top: 6px;
-            Row {
-                art: track.cover; title: track.title; sub: track.artist + " • " + track.album;
-                activated => { UI.play(i); }
-            }
+    if UI.query.is-empty : VerticalLayout {
+        for entry in AppBridge.recent-searches : Row {
+            title: entry; activated => { UI.query = entry; }
         }
     }
-    if UI.query.is-empty && !UI.recent : Ink { text: "Nenhuma pesquisa recente"; color: UI.palette.muted; }
-    if !UI.query.is-empty && !root.any-result : Ink { text: "Nenhum resultado"; color: UI.palette.muted; }
+    if !UI.query.is-empty : VerticalLayout {
+        for track in AppBridge.results : Row {
+            art: track.cover; title: track.title; sub: track.artist + " • " + track.album;
+            activated => { UI.play(track.id); }
+        }
+        for item in AppBridge.search-collections : Row {
+            art: item.cover; title: item.title; sub: item.sub;
+            activated => { AppBridge.open-item(item.kind, item.id); }
+        }
+        if AppBridge.searching : Ink { text: "Buscando…"; color: UI.palette.muted; }
+        if !AppBridge.searching && !AppBridge.search-message.is-empty : Ink {
+            text: AppBridge.search-message; color: UI.palette.muted; wrap: word-wrap;
+        }
+    }
+}
+
+export component Detail inherits VerticalLayout {
+    spacing: 8px;
+    Header { title: AppBridge.detail-title; back: true; }
+    if AppBridge.detail-tracks.length > 0 : Row {
+        title: "Tocar"; glyph: @image-url("assets/play.svg");
+        activated => { AppBridge.play-detail(); }
+    }
+    if !AppBridge.detail-message.is-empty : Ink {
+        text: AppBridge.detail-message; color: UI.palette.muted; wrap: word-wrap;
+    }
+    if AppBridge.editable-playlist : HorizontalLayout {
+        spacing: 8px;
+        Pill { title: "Renomear"; activated => { UI.playlist-name = AppBridge.detail-title; UI.sheet = Sheet.playlist-rename; } }
+        Pill { title: "Capa"; activated => { AppBridge.setting("playlistCover", 0); } }
+        Pill { title: "Excluir"; activated => { UI.sheet = Sheet.playlist-delete; } }
+    }
+    for album in AppBridge.detail-albums : Row {
+        art: album.cover; title: album.title; sub: album.sub;
+        activated => { AppBridge.open-item("album", album.id); }
+    }
+    for track[i] in AppBridge.detail-tracks : HorizontalLayout {
+        Row {
+            title: track.title; sub: track.artist; art: track.cover; detail: track.duration-label;
+            horizontal-stretch: 1;
+            activated => { UI.play(track.id); }
+        }
+        Action {
+            size: 32px; title: "Tocar em seguida"; glyph: @image-url("assets/plus.svg");
+            activated => { AppBridge.track-queue(track.id, true); }
+        }
+        if AppBridge.cached-detail : Action {
+            size: 32px; title: "Remover do cache"; glyph: @image-url("assets/trash.svg");
+            activated => { AppBridge.remove-cached(track.id); }
+        }
+        if track.local && !AppBridge.editable-playlist : Action {
+            size: 32px; title: "Editar metadados"; glyph: @image-url("assets/more.svg");
+            activated => { UI.edit-tags(track); }
+        }
+        if AppBridge.editable-playlist && i > 0 : Action {
+            size: 32px; title: "Mover para cima"; glyph: @image-url("assets/chev.svg");
+            activated => { AppBridge.edit-playlist-row("move", i, track.id); }
+        }
+        if AppBridge.editable-playlist : Action {
+            size: 32px; title: "Remover da playlist"; glyph: @image-url("assets/close.svg");
+            activated => { AppBridge.edit-playlist-row("remove", i, track.id); }
+        }
+    }
 }

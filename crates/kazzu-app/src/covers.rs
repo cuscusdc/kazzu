@@ -12,7 +12,7 @@ use image::RgbaImage;
 use crate::art::{self, Pixels};
 
 /// Lado máximo das capas de lista e cartão (a tela nunca as mostra maiores que 320 px lógicos).
-pub const LIST_SIDE: u32 = 320;
+pub const LIST_SIDE: u32 = if cfg!(target_os = "android") { 192 } else { 320 };
 /// Lado máximo da capa do player.
 pub const PLAYER_SIDE: u32 = 640;
 const MAX_BYTES: u64 = 6 * 1024 * 1024;

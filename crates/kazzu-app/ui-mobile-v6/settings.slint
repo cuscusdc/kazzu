@@ -1,7 +1,8 @@
-import { Demo, SettingRow } from "data.slint";
+import { AppBridge } from "app-bridge.slint";
+import { Design, SettingRow } from "data.slint";
 import { UI } from "state.slint";
 import { Header, SearchField } from "browse.slint";
-import { Ink, Glass, Row, Scrubber } from "components.slint";
+import { Ink, Glass, Pill, Row, Scrubber } from "components.slint";
 
 component Setting inherits Row {
     in property <SettingRow> item;
@@ -14,20 +15,26 @@ component Setting inherits Row {
     glyph: root.item.glyph;
     tag: root.item.tag;
     detail: !root.summary ? "" :
-        root.radio == 0 ? ["320k", "Hi-Res", "160k", "Auto"][UI.radios[0]] :
+        root.radio == 0 ? ["Original", "Alta", "Econômica"][AppBridge.stream-quality] :
         root.radio == 1 ? ["Alta", "Padrão", "Automático"][UI.radios[1]] :
-        root.radio == 3 ? "\{UI.radios[3] * 2}s" : root.item.detail;
+        root.radio == 3 ? "\{AppBridge.crossfade-seconds}s" : root.item.detail;
     enabled: !root.item.disabled;
     interactive: root.item.kind == "action" || root.item.kind == "radio";
     has-toggle: root.toggle >= 0;
-    checked-toggle: root.toggle >= 0 && UI.toggles[root.toggle];
-    checked: root.item.kind == "radio" && root.radio >= 0 && UI.radios[root.radio] == root.item.choice;
+    checked-toggle: root.toggle == 13 ? AppBridge.autoplay : root.toggle >= 0 && UI.toggles[root.toggle];
+    checked: root.item.kind == "radio" && root.radio >= 0 && (root.radio == 0 ? AppBridge.stream-quality : root.radio == 4 ? UI.effects : root.radio == 3 ? AppBridge.crossfade-seconds / 2 : UI.radios[root.radio]) == root.item.choice;
     chevron: root.item.kind == "action";
     activated => {
-        if (root.item.kind == "radio") { UI.radios[root.radio] = root.item.choice; }
+        if (root.item.kind == "radio" && root.radio == 0 && root.item.choice < 3) { AppBridge.setting("quality", root.item.choice); }
+        else if (root.item.kind == "radio" && root.radio == 3) { AppBridge.setting("crossfade", root.item.choice * 2); }
+        else if (root.item.kind == "radio" && root.radio == 4) { AppBridge.setting("effects", root.item.choice); }
+        else if (root.item.kind == "radio") { UI.soon(); }
         else { UI.setting-action(root.item.action, root.item.target); }
     }
-    toggled => { UI.toggles[root.toggle] = !UI.toggles[root.toggle]; }
+    toggled => {
+        if (root.toggle == 13) { AppBridge.setting("autoplay", AppBridge.autoplay ? 0 : 1); }
+        else { UI.toggle(root.toggle); }
+    }
 }
 
 component Eyebrow inherits Ink {
@@ -41,7 +48,7 @@ export component Settings inherits VerticalLayout {
     Header { title: "Configurações"; back: true; }
     Rectangle { height: 12px; }
     SearchField { value <=> UI.settings-query; hint: "Buscar nas configurações"; }
-    for group in Demo.settings-groups : VerticalLayout {
+    for group in Design.settings-groups : VerticalLayout {
         // Match the entire group only for the heading. Each row filters independently.
         private property <bool> any: matches-row(0) || matches-row(1) || matches-row(2) || matches-row(3)
             || matches-row(4) || matches-row(5) || matches-row(6) || matches-row(7) || matches-row(8)
@@ -65,7 +72,7 @@ export component Settings inherits VerticalLayout {
         }
     }
     if UI.settings-query.is-empty : Ink {
-        text: "kazzu · v1.4.2\nCódigo aberto · Licença MIT";
+        text: "Kazzu " + AppBridge.version;
         color: UI.palette.muted;
         font-size: 12px;
         horizontal-alignment: center;
@@ -74,11 +81,124 @@ export component Settings inherits VerticalLayout {
 }
 
 export component SettingsPage inherits VerticalLayout {
-    private property <int> index: clamp(UI.page, 0, Demo.settings-pages.length - 1);
+    private property <int> index: clamp(UI.page, 0, Design.settings-pages.length - 1);
     spacing: 6px;
-    Header { title: Demo.settings-pages[root.index].title; back: true; }
+    Header { title: Design.settings-pages[root.index].title; back: true; }
     Rectangle { height: 8px; }
-    for item in Demo.settings-pages[root.index].rows : VerticalLayout {
+    if root.index == 0 : account := VerticalLayout {
+        spacing: 8px;
+        property <string> token;
+        property <bool> youtube: true;
+        Ink { text: AppBridge.remote-available ? "YouTube Music · Visitante" : "YouTube Music indisponível"; }
+        Ink { text: "Importar coleções"; font-weight: 800; }
+        HorizontalLayout {
+            spacing: 6px; alignment: start;
+            Pill { title: "YouTube"; selected: account.youtube; activated => { account.youtube = true; } }
+            Pill { title: "Spotify"; selected: !account.youtube; activated => { account.youtube = false; } }
+        }
+        SearchField { value <=> account.token; hint: "Token OAuth de acesso"; secret: true; }
+        Pill {
+            title: AppBridge.import-pending ? "Importando…" : "Importar";
+            activated => {
+                if (!AppBridge.import-pending && !account.token.is-empty) {
+                    AppBridge.import-account(account.youtube ? "youtube" : "spotify", account.token);
+                    account.token = "";
+                }
+            }
+        }
+        if !AppBridge.import-message.is-empty : Ink {
+            text: AppBridge.import-message; color: UI.palette.muted; wrap: word-wrap;
+        }
+    }
+    if root.index == 0 : scrobble := VerticalLayout {
+        spacing: 8px;
+        property <string> api-key;
+        property <string> secret;
+        Ink { text: "Last.fm"; font-weight: 800; }
+        Ink { text: AppBridge.lastfm-status; color: UI.palette.muted; wrap: word-wrap; }
+        if !AppBridge.lastfm-connected : VerticalLayout {
+            SearchField { value <=> scrobble.api-key; hint: "Chave da API Last.fm"; secret: true; }
+            SearchField { value <=> scrobble.secret; hint: "Segredo da API Last.fm"; secret: true; }
+            Pill {
+                title: "Autorizar envio de reproduções";
+                activated => {
+                    if (!scrobble.api-key.is-empty && !scrobble.secret.is-empty) {
+                        AppBridge.lastfm-authorize(scrobble.api-key, scrobble.secret);
+                        scrobble.api-key = "";
+                        scrobble.secret = "";
+                    }
+                }
+            }
+            Pill { title: "Confirmar autorização"; activated => { AppBridge.lastfm-finish(true); } }
+        }
+        if AppBridge.lastfm-connected : Pill {
+            title: "Desconectar Last.fm"; activated => { AppBridge.lastfm-finish(false); }
+        }
+    }
+    if root.index == 1 : remote := VerticalLayout {
+        spacing: 8px;
+        property <string> code;
+        Ink { text: "Controle remoto na rede local"; font-weight: 800; }
+        Pill {
+            title: AppBridge.lan-code.is-empty ? "Permitir controle neste aparelho" : "Encerrar sessão";
+            activated => { AppBridge.host-remote(AppBridge.lan-code.is-empty, false, ""); }
+        }
+        if AppBridge.lan-code.is-empty : Pill {
+            title: "Criar sala YouTube Music";
+            activated => { AppBridge.host-remote(true, true, ""); }
+        }
+        if AppBridge.lan-code.is-empty : VerticalLayout {
+            for playlist in AppBridge.playlists : VerticalLayout {
+                if playlist.kind == "playlist" : Row {
+                    title: "Colaborar · " + playlist.title;
+                    activated => { AppBridge.host-remote(true, true, playlist.id); }
+                }
+            }
+        }
+        if AppBridge.lan-code.is-empty : Pill {
+            title: "Compartilhar backup na rede local";
+            activated => { AppBridge.setting("shareBackup", 0); }
+        }
+        if !AppBridge.lan-code.is-empty : VerticalLayout {
+            Ink { text: "Código de controle · válido por até 30 minutos"; color: UI.palette.muted; }
+            TextInput { text: AppBridge.lan-code; read-only: true; accessible-label: "Código de controle"; height: 34px; color: UI.palette.ink; }
+        }
+        SearchField { value <=> remote.code; hint: "Código do outro aparelho"; secret: true; }
+        Pill {
+            title: AppBridge.following-room ? "Sair da sala" : "Seguir sala";
+            activated => {
+                if (AppBridge.following-room) { AppBridge.follow-room(""); }
+                else if (!remote.code.is-empty) { AppBridge.follow-room(remote.code); }
+            }
+        }
+        Pill {
+            title: "Enviar faixa atual à playlist da sala";
+            activated => { if (!remote.code.is-empty) { AppBridge.suggest-room-track(remote.code); } }
+        }
+        Pill {
+            title: "Importar backup do outro aparelho";
+            activated => { if (!remote.code.is-empty) { AppBridge.copy-peer-backup(remote.code); } }
+        }
+        if !AppBridge.room-status.is-empty : Ink { text: AppBridge.room-status; color: UI.palette.muted; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 6px;
+            for action[i] in ["Tocar/Pausar", "Anterior", "Próxima"] : Pill {
+                title: action;
+                activated => { if (!remote.code.is-empty) { AppBridge.send-remote(remote.code, i); } }
+            }
+        }
+    }
+    if root.index == 13 : VerticalLayout {
+        spacing: 6px;
+        init => { AppBridge.setting("storageUsage", 0); }
+        Row { title: "Dados persistentes"; detail: AppBridge.persistent-usage; interactive: false; }
+        Row { title: "Cache descartável"; detail: AppBridge.cache-usage; interactive: false; }
+        Row { title: "Ver áudio em cache"; activated => { AppBridge.open-item("downloads", ""); } }
+    }
+    if root.index == 12 && !AppBridge.scan-label.is-empty : Ink {
+        text: AppBridge.scan-label; color: UI.palette.muted;
+    }
+    for item in Design.settings-pages[root.index].rows : VerticalLayout {
         if item.kind == "heading" : Eyebrow { text: item.title.to-uppercase(); height: 28px; vertical-alignment: center; }
         if item.kind != "heading" : Setting { item: item; }
     }
@@ -109,12 +229,12 @@ export component Appearance inherits VerticalLayout {
     VerticalLayout {
         spacing: 2px;
         for label[index] in ["Cor da capa (You)", "Tema escuro", "Formas expressivas", "Animações expressivas"] : Row {
-            title: label; has-toggle: true; checked-toggle: UI.toggles[index]; interactive: false;
-            toggled => { UI.toggles[index] = !UI.toggles[index]; }
+            title: label; has-toggle: true; checked-toggle: index == 0 ? AppBridge.cover-theme : index == 1 ? UI.dark : index == 3 ? !AppBridge.reduce-motion : UI.rounded; interactive: false;
+            toggled => { UI.toggle(index); }
         }
     }
     Eyebrow { text: "VIDRO E TEXTURA"; height: 24px; vertical-alignment: bottom; }
-    for control[index] in Demo.glass-controls : Rectangle {
+    for control[index] in Design.glass-controls : Rectangle {
         height: 79px;
         background: UI.palette.card;
         border-radius: UI.tile-radius;
@@ -129,7 +249,7 @@ export component Appearance inherits VerticalLayout {
             Scrubber {
                 label: control.title; height: 30px;
                 value: (UI.glass[index] - control.minimum) / (control.maximum - control.minimum);
-                changed(fraction) => { UI.glass[index] = round(control.minimum + fraction * (control.maximum - control.minimum)); }
+                changed(fraction) => { AppBridge.glass-change(index, round(control.minimum + fraction * (control.maximum - control.minimum))); }
             }
         }
     }

@@ -99,6 +99,8 @@ pub enum PlaybackCommand {
     Previous,
     JumpTo { id: QueueItemId },
     Remove { id: QueueItemId },
+    /// Move an item immediately before another item in playback order.
+    MoveBefore { id: QueueItemId, before: QueueItemId },
     Clear,
     SetRepeat { mode: RepeatMode },
     SetShuffle { enabled: bool },
@@ -145,6 +147,8 @@ pub enum PlaybackEvent {
     },
     /// Reached the end of the queue.
     QueueFinished,
+    /// The sleep timer has paused playback.
+    SleepTimerElapsed,
     /// Non-fatal error (e.g. a track failed to decode and was skipped).
     Error {
         id: Option<QueueItemId>,

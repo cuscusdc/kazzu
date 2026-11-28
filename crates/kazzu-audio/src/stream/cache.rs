@@ -84,13 +84,49 @@ impl StreamCache {
         self.entries().iter().map(|e| e.1).sum()
     }
 
+    /// Lists completed cache entries without updating their recency.
+    pub fn complete_keys(&self) -> std::collections::HashSet<String> {
+        self.entries().into_iter().filter_map(|(path, _, _)| {
+            Some(path.file_name()?.to_str()?.split_once('.')?.0.to_owned())
+        }).collect()
+    }
+
+    /// Evicts completed copies of one track. Active partial files are retained.
+    pub fn remove_track(&self, track: &Track) -> io::Result<bool> {
+        let Some(key) = Self::key_for(track) else { return Ok(false) };
+        let _guard = self.lock.lock().unwrap_or_else(|error| error.into_inner());
+        let mut removed = false;
+        for (path, _, _) in self.entries() {
+            if path.file_name().and_then(|name| name.to_str()).and_then(|name| name.split_once('.'))
+                .is_some_and(|(stored, _)| stored == key)
+            {
+                match fs::remove_file(path) {
+                    Ok(()) => removed = true,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     /// Deletes every complete entry.
     pub fn clear(&self) -> io::Result<()> {
-        let _guard = self.lock.lock();
-        for (path, _, _) in self.entries() {
-            fs::remove_file(path)?;
+        self.clear_and_count().map(|_| ())
+    }
+
+    /// Clears completed streams only and returns the number of bytes removed.
+    pub fn clear_and_count(&self) -> io::Result<u64> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut removed = 0u64;
+        for (path, bytes, _) in self.entries() {
+            match fs::remove_file(path) {
+                Ok(()) => removed = removed.saturating_add(bytes),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
-        Ok(())
+        Ok(removed)
     }
 
     fn entries(&self) -> Vec<(PathBuf, u64, SystemTime)> {

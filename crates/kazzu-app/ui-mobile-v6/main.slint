@@ -1,11 +1,13 @@
+import { AppBridge } from "app-bridge.slint";
+import { Track, Tile } from "data.slint";
 import { ScrollView } from "std-widgets.slint";
 import { UI, Screen, Sheet } from "state.slint";
-import { Home, Explore, Library, Search, Replay } from "browse.slint";
+import { Home, Explore, Library, Search, Replay, Detail } from "browse.slint";
 import { Settings, SettingsPage, Appearance } from "settings.slint";
 import { BottomIsland, Player, PlayerSheet } from "player.slint";
-import { Ink, Artwork } from "components.slint";
+import { Ink, Artwork, Pill } from "components.slint";
 
-export { UI, Screen, Sheet }
+export { UI, Screen, Sheet, AppBridge, Track, Tile }
 
 export component AppWindow inherits Window {
     title: "Kazzu";
@@ -14,7 +16,7 @@ export component AppWindow inherits Window {
     height: 780px;
     default-font-family: "Roboto";
     background: UI.palette.bg;
-    private property <bool> high-effects: UI.radios[4] == 2 && UI.motion;
+    private property <bool> high-effects: UI.effects == 2 && UI.motion;
     private property <float> ambient-cycle: root.high-effects ? animation-tick() / 1s : 0;
 
     in property <length> safe-top: self.safe-area-insets.top;
@@ -22,8 +24,8 @@ export component AppWindow inherits Window {
     in property <length> safe-left: self.safe-area-insets.left;
     in property <length> safe-right: self.safe-area-insets.right;
     private property <bool> player-visible: UI.player-open;
-    private property <bool> spinning-player: UI.playing && UI.player-open && !UI.lyrics && UI.vinyl-mode < 2;
-    private property <bool> spinning-deck: UI.playing && UI.screen == Screen.explore && !UI.player-open && UI.placed-record == UI.track-index;
+    private property <bool> spinning-player: UI.motion && UI.playing && UI.player-open && !UI.lyrics && UI.vinyl-mode < 2;
+    private property <bool> spinning-deck: UI.motion && UI.playing && UI.screen == Screen.explore && !UI.player-open && UI.placed-record >= 0 && AppBridge.trending[UI.placed-record].id == UI.track.id;
     private property <bool> shared-cover;
     private property <bool> restore-focus;
     changed player-visible => {
@@ -48,7 +50,7 @@ export component AppWindow inherits Window {
         else if (self.preview == "settings-page") { UI.screen = Screen.settings-page; UI.page = 11; }
         else if (self.preview == "appearance" || self.preview == "light") {
             UI.screen = Screen.appearance;
-            UI.toggles[1] = self.preview != "light";
+            AppBridge.setting("dark", self.preview == "light" ? 0 : 1);
         } else if (self.preview == "player" || self.preview == "queue" || self.preview == "more" || self.preview == "lyrics") {
             UI.player-open = true;
             UI.lyrics = self.preview == "lyrics";
@@ -56,11 +58,10 @@ export component AppWindow inherits Window {
         }
     }
 
-    Timer {
-        interval: 1000ms;
-        running: UI.playing;
-        triggered => { UI.tick(); }
-    }
+    private property <int> notice-id: AppBridge.notice-id;
+    changed notice-id => { UI.toast(AppBridge.notice); UI.toast-action = AppBridge.notice-action; }
+    private property <string> startup-error: AppBridge.startup-error;
+    changed startup-error => { UI.toast(root.startup-error); }
     Timer {
         interval: 33ms;
         running: root.spinning-player || root.spinning-deck;
@@ -102,11 +103,11 @@ export component AppWindow inherits Window {
     keyboard := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Back || event.text == Key.Escape) { UI.back(); return accept; }
-            if (event.text == " ") { UI.playing = !UI.playing; return accept; }
+            if (event.text == " ") { AppBridge.toggle-play(); return accept; }
             if (event.text.to-lowercase() == "j") { UI.previous(); return accept; }
             if (event.text.to-lowercase() == "l") { UI.next(); return accept; }
-            if (event.text.to-lowercase() == "s") { UI.shuffle = !UI.shuffle; return accept; }
-            if (event.text.to-lowercase() == "r") { UI.repeat = !UI.repeat; return accept; }
+            if (event.text.to-lowercase() == "s") { AppBridge.toggle-shuffle(); return accept; }
+            if (event.text.to-lowercase() == "r") { AppBridge.cycle-repeat(); return accept; }
             if (event.text.to-lowercase() == "m") { UI.mute(); return accept; }
             return reject;
         }
@@ -144,8 +145,14 @@ export component AppWindow inherits Window {
                 content-height: page-layout.preferred-height;
                 property <Screen> active-screen: UI.screen;
                 property <int> active-page: UI.page;
+                property <bool> showing-detail: AppBridge.detail-open;
+                changed showing-detail => { self.reset-page(); }
                 property <bool> entering;
-                changed active-screen => { self.reset-page(); }
+                changed active-screen => {
+                    self.reset-page();
+                    AppBridge.navigation(UI.screen == Screen.home ? 0 : UI.screen == Screen.explore ? 1 :
+                        UI.screen == Screen.library ? 2 : UI.screen == Screen.search ? 3 : 4);
+                }
                 changed active-page => { self.reset-page(); }
                 function reset-page() {
                     self.content-y = 0px;
@@ -163,13 +170,14 @@ export component AppWindow inherits Window {
                     padding-right: root.safe-right + 16px;
                     padding-top: root.safe-top + 15px;
                     padding-bottom: 160px + root.safe-bottom;
-                    if UI.screen == Screen.home : Home {}
-                    if UI.screen == Screen.explore : Explore {}
-                    if UI.screen == Screen.library : Library {}
-                    if UI.screen == Screen.search : Search { }
+                    if !AppBridge.detail-open && UI.screen == Screen.home : Home {}
+                    if !AppBridge.detail-open && UI.screen == Screen.explore : Explore {}
+                    if !AppBridge.detail-open && UI.screen == Screen.library : Library {}
+                    if !AppBridge.detail-open && UI.screen == Screen.search : Search { }
+                    if AppBridge.detail-open : Detail {}
                     if UI.screen == Screen.replay : Replay {}
                     if UI.screen == Screen.settings : Settings {}
-                    if UI.screen == Screen.settings-page : SettingsPage {}
+                    if !AppBridge.detail-open && UI.screen == Screen.settings-page : SettingsPage {}
                     if UI.screen == Screen.appearance : Appearance {}
                 }
             }
@@ -214,14 +222,19 @@ export component AppWindow inherits Window {
         PlayerSheet { bottom-inset: root.safe-bottom; }
         if UI.toast-ms > 0 : Rectangle {
             y: parent.height - 114px - root.safe-bottom - self.height;
-            width: min(parent.width - 30px, toast.preferred-width + 30px);
+            width: min(parent.width - 30px, toast.preferred-width + (UI.toast-action.is-empty ? 30px : 132px));
             height: 42px;
             border-radius: 22px; background: #140e16eb;
             accessible-role: text;
             accessible-label: UI.toast-text;
             toast := Ink {
-                x: 11px; width: parent.width - 22px; text: UI.toast-text; color: white;
+                x: 11px; width: parent.width - (UI.toast-action.is-empty ? 22px : 120px); text: UI.toast-text; color: white;
                 horizontal-alignment: center; vertical-alignment: center; font-size: 13px;
+            }
+            if !UI.toast-action.is-empty : Pill {
+                x: parent.width - 108px; width: 102px; height: 32px;
+                title: UI.toast-action; inverse: true; selected: true; side-padding: 4px;
+                activated => { UI.toast-ms = 0; AppBridge.notice-pressed(); }
             }
         }
     }

@@ -84,6 +84,9 @@ pub struct LibrarySnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum StreamSource {
+    /// A remote queue entry whose transport is resolved when the engine opens it.
+    Deferred,
+
     /// Local (or already downloaded/cached) file.
     File { path: PathBuf },
     /// HTTP(S) stream. Headers carry provider-specific auth if needed.

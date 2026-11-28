@@ -14,6 +14,7 @@
 #   KAZZU_KEYSTORE               keystore de release (~/.android/kazzu-release.jks)
 #   KAZZU_KEYSTORE_PASS_FILE     arquivo com a senha (~/.android/kazzu-release.pass); a senha nunca vai para o log
 #   KAZZU_KEY_ALIAS              alias da chave (kazzu)
+#   KAZZU_SIGNER_SHA256          impressão digital esperada do certificado oficial, opcional
 # --debug-sign: assina com uma chave descartável (só para testes/CI sem segredo); NÃO serve para publicar.
 set -euo pipefail
 
@@ -73,6 +74,14 @@ VERSION_CODE=$((V_MAJ * 1000000 + V_MIN * 10000 + V_PAT * 100 + BUILD))
 # --- assinatura -----------------------------------------------------------------------------------------------
 mkdir -p "$OUT"
 KEY_ALIAS="${KAZZU_KEY_ALIAS:-kazzu}"
+EXPECTED_CERT=""
+if [[ "${DEBUG_SIGN}" -eq 0 && -n "${KAZZU_SIGNER_SHA256:-}" ]]; then
+  EXPECTED_CERT="$(printf '%s' "$KAZZU_SIGNER_SHA256" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+  [[ "$EXPECTED_CERT" =~ ^[[:xdigit:]]{64}$ ]] || {
+    echo "impressão digital SHA-256 do certificado inválida" >&2
+    exit 2
+  }
+fi
 if [[ $DEBUG_SIGN -eq 1 ]]; then
   KS="$REPO/target/android/debug.jks"; PASS_FILE="$REPO/target/android/debug.pass"; KEY_ALIAS=kazzu-debug
   if [[ ! -f "$KS" ]]; then
@@ -91,6 +100,12 @@ fi
 WORK="$REPO/target/android/work"
 rm -rf "$WORK"; mkdir -p "$WORK"
 "$BT/aapt2" compile --dir android/res -o "$WORK/res.zip"
+
+# Compila a pequena ponte do Android e a converte para DEX uma vez por execução.
+mkdir -p "$WORK/java" "$WORK/dex"
+javac --release 8 -classpath "$PLATFORM_JAR" -d "$WORK/java" android/src/app/kazzu/player/*.java
+mapfile -d '' JAVA_CLASSES < <(find "$WORK/java" -name '*.class' -print0)
+"$BT/d8" --lib "$PLATFORM_JAR" --min-api "$MIN_SDK" --output "$WORK/dex" "${JAVA_CLASSES[@]}"
 
 for ABI in "${ABIS[@]}"; do
   case "$ABI" in
@@ -117,10 +132,11 @@ for ABI in "${ABIS[@]}"; do
     --min-sdk-version "$MIN_SDK" --target-sdk-version 34 --version-code "$VERSION_CODE" --version-name "$VERSION" \
     -R "$WORK/res.zip" --auto-add-overlay
   # biblioteca nativa sem compressão (extractNativeLibs=false); python3 só para escrever o zip
-  python3 -I - "$BASE" "$SO" "$ABI" <<'PY'
+  python3 -I - "$BASE" "$SO" "$ABI" "$WORK/dex/classes.dex" <<'PY'
 import sys, zipfile
-apk, so, abi = sys.argv[1:4]
+apk, so, abi, dex = sys.argv[1:5]
 with zipfile.ZipFile(apk, "a") as z:
+    z.write(dex, "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
     z.write(so, f"lib/{abi}/libkazzu_app.so", compress_type=zipfile.ZIP_STORED)
 PY
   ALIGNED="$WORK/aligned-$ABI.apk"
@@ -129,6 +145,14 @@ PY
   "$BT/apksigner" sign --ks "$KS" --ks-key-alias "$KEY_ALIAS" --ks-pass "file:$PASS_FILE" \
     --min-sdk-version "$MIN_SDK" --v4-signing-enabled false --out "$APK" "$ALIGNED"
   "$BT/apksigner" verify --min-sdk-version "$MIN_SDK" "$APK"
+  if [[ -n "$EXPECTED_CERT" ]]; then
+    ACTUAL_CERT="$(LC_ALL=C "$BT/apksigner" verify --print-certs --min-sdk-version "$MIN_SDK" "$APK" |
+      awk -F ': ' '/^Signer #[0-9]+ certificate SHA-256 digest:/ { print tolower($2) }')"
+    [[ "$ACTUAL_CERT" == "$EXPECTED_CERT" ]] || {
+      echo "certificado do APK não corresponde à impressão digital oficial" >&2
+      exit 1
+    }
+  fi
   (cd "$OUT" && sha256sum "$(basename "$APK")" > "$(basename "$APK").sha256")
   echo "==> $APK ($(du -h "$APK" | cut -f1))"
 done

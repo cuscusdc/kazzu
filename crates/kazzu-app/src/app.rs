@@ -4,15 +4,16 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 
-use kazzu_audio::{CacheConfig, Engine, EngineConfig, EngineHandle, NullSink};
-use kazzu_core::PlaybackEvent;
+use kazzu_audio::{CacheConfig, Engine, EngineConfig, NullSink};
 use slint::ComponentHandle;
 
 use crate::catalog::{Providers, YtmCatalog};
 use crate::config::{Config, StreamQualityPref, ThemePref};
 use crate::controller::{Controller, Msg, MsgSink, NavTab};
 use crate::covers::CoverFetcher;
+use crate::event_bridge::{spawn_engine_bridge, spawn_stream_bridge};
 use crate::remote::RemoteWorker;
 use crate::slint_view::SlintView;
 use crate::ui;
@@ -115,18 +116,6 @@ impl App {
         let mut config = EngineConfig { volume: crate::controller::sane_unit(cfg.volume, 1.0), ..EngineConfig::default() };
         // faixas remotas ouvidas até o fim ficam em disco (base do modo offline); o limite protege o espaço do usuário
         config.stream.cache = Some(CacheConfig { dir: data_dir.join("cache").join("streams"), max_bytes: STREAM_CACHE_BYTES });
-        let engine: EngineHandle = if opts.null_audio {
-            Engine::builder().sink(NullSink::new()).config(config).spawn()?
-        } else {
-            Engine::builder().config(config).spawn()?
-        };
-
-        let sink: MsgSink = Arc::new(|msg| {
-            let _ = slint::invoke_from_event_loop(move || dispatch(msg));
-        });
-        spawn_engine_bridge(&engine, sink.clone())?;
-        spawn_stream_bridge(&engine, sink.clone())?;
-
         // YouTube Music: provedor padrão, ativo sem login. Falha ao abrir o cache/biblioteca dele não derruba o app.
         let remote = if opts.no_remote {
             None
@@ -140,6 +129,22 @@ impl App {
             }
         };
         let remote_on = remote.is_some();
+
+        let quality = Arc::new(AtomicI32::new(cfg.stream_quality.index()));
+        let mut engine = Engine::builder().config(config);
+        if opts.null_audio {
+            engine = engine.sink(NullSink::new());
+        }
+        if let Some(catalog) = remote.as_ref().and_then(|worker| worker.providers().default_remote()).cloned() {
+            engine = crate::catalog::install_resolver(engine, catalog, quality.clone());
+        }
+        let engine = engine.spawn()?;
+        let sink: MsgSink = Arc::new(|msg| {
+            let _ = slint::invoke_from_event_loop(move || dispatch(msg));
+        });
+        spawn_engine_bridge(&engine, sink.clone())?;
+        spawn_stream_bridge(&engine, sink.clone())?;
+
 
         let emit_sink = sink.clone();
         let runner = ThreadedRunner::spawn(data_dir.clone(), Arc::new(move |r| emit_sink(Msg::Job(r))), remote)?;
@@ -155,8 +160,10 @@ impl App {
         let view = SlintView::new(&window);
         let mut ctl = Controller::new(view, engine, Box::new(runner), sink.clone(), cfg, cfg_path);
         ctl.set_data_dir(data_dir);
+        #[cfg(unix)]
+        ctl.enable_discord_from_env();
         if remote_on {
-            ctl.enable_remote();
+            ctl.enable_engine_remote(quality);
         }
         let controller = Rc::new(RefCell::new(ctl));
         CONTROLLER.with(|slot| *slot.borrow_mut() = Some(controller.clone()));
@@ -207,26 +214,6 @@ fn licenses_text() -> String {
         .to_owned()
 }
 
-/// Lê os eventos do motor numa thread e os entrega à UI (agrupando posições, que chegam a ~10 Hz).
-fn spawn_engine_bridge(engine: &EngineHandle, sink: MsgSink) -> std::io::Result<()> {
-    let rx = engine.events().clone();
-    std::thread::Builder::new().name("kazzu-events".into()).spawn(move || {
-        while let Ok(first) = rx.recv() {
-            let mut batch = vec![first];
-            batch.extend(rx.try_iter());
-            // só a última posição do lote interessa
-            let last_position = batch.iter().rposition(|e| matches!(e, PlaybackEvent::Position { .. }));
-            for (i, ev) in batch.into_iter().enumerate() {
-                if matches!(ev, PlaybackEvent::Position { .. }) && Some(i) != last_position {
-                    continue;
-                }
-                sink(Msg::Engine(ev));
-            }
-        }
-    })?;
-    Ok(())
-}
-
 /// Orçamento de um quadro (60 fps).
 const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
 /// Janela em que os quadros lentos precisam dominar para o app oferecer "Reduzir transparência".
@@ -266,17 +253,6 @@ fn watch_frames(window: &ui::AppWindow, sink: MsgSink) {
     if let Err(e) = result {
         log::info!("medição de quadros indisponível neste renderer: {e}");
     }
-}
-
-/// Lê os eventos de streaming (URL vencida, rede caiu) e os entrega à UI.
-fn spawn_stream_bridge(engine: &EngineHandle, sink: MsgSink) -> std::io::Result<()> {
-    let rx = engine.stream_events().clone();
-    std::thread::Builder::new().name("kazzu-stream-events".into()).spawn(move || {
-        while let Ok(ev) = rx.recv() {
-            sink(Msg::Stream(ev));
-        }
-    })?;
-    Ok(())
 }
 
 macro_rules! cb {

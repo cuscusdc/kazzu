@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Kazzu para Android. Sem código Java próprio: a Activity é a NativeActivity do sistema, que carrega
+  Kazzu para Android. A Activity estende NativeActivity e carrega
   libkazzu_app.so (ponto de entrada `android_main`, ver crates/kazzu-app/src/android.rs).
   Permissões: só o necessário (ver docs/ANDROID.md). Nenhum serviço do Google, nenhuma telemetria.
 -->
@@ -11,10 +11,8 @@
 
     <!-- Rede: YouTube Music (provedor padrão, sem conta) e as capas dos itens vistos; só na abertura do Início e por ação do usuário. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Ler as músicas da pasta Music: Android 13+ -->
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- ... e Android 8 a 12 -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
@@ -22,14 +20,14 @@
         android:label="Kazzu"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:hasCode="false"
+        android:hasCode="true"
         android:extractNativeLibs="false"
         android:allowBackup="false"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".KazzuActivity"
             android:exported="true"
             android:label="Kazzu"
             android:launchMode="singleTask"
@@ -41,5 +39,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".KazzuVideoActivity" android:exported="false" />
+        <service android:name=".KazzuMediaService"
+            android:exported="false" android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

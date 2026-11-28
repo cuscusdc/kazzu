@@ -30,6 +30,8 @@ mod model;
 mod queries;
 mod scan;
 mod scanner;
+mod statistics;
+mod tag_edit;
 
 use std::path::{Path, PathBuf};
 
@@ -43,6 +45,9 @@ pub use model::{
 
 /// Extensões de áudio reconhecidas pelo scanner.
 pub use scanner::AUDIO_EXTENSIONS;
+pub use queries::{RestorePlaylistEntry, RestoredPlaylist};
+pub use statistics::{ListeningRank, ListeningStats};
+pub use tag_edit::update_tags;
 
 /// Handle da biblioteca local.
 pub struct Library {

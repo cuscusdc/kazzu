@@ -2,6 +2,20 @@
 
 Design system e planejamento de UX do Kazzu (**v3: Apple-like, fundo neutro, vidro claro sobre conteúdo**). Comece por `DESIGN.md` (como é) e `ux/UX_PLAN.md` (o quê e por quê; **aprovado e inalterado**: a v3 só muda o visual). O implementador de UI segue `SLINT_SPEC.md`.
 
+## Mapa do design
+
+| Área | Entrada |
+|---|---|
+| Direção atual (v4) | `v4/README.md`, `v4/DIRECTION.md`, `v4/DESIGN.md` |
+| Protótipos atuais | `v4/prototypes/index.html` |
+| Capturas atuais | `v4/shots/ui-nova/`, `v4/shots/proto/`, `v4/shots/slint/`, `v4/shots/ux/` |
+| Slint atual | `v4/slint/` |
+| v3 (legado) | `DESIGN.md`, `SLINT_SPEC.md`, `prototypes/`, `slint/`, `ux/` |
+| Experimentos | `experiments/nova-ui-teste/` (prévia Slint v6) e `experiments/kazzu-unico.html` (protótipo desktop autocontido) |
+| Índice geral do repositório | `../docs/INDEX.md` |
+
+Abaixo, a documentação operacional da v3, mantida porque ainda descreve os comandos de geração e verificação.
+
 | Pasta/arquivo | Conteúdo |
 |---|---|
 | `DESIGN.md` | direção de arte v3: cor neutra, vidro em 3 materiais, tipografia Inter, forma, antes × depois |

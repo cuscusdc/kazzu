@@ -2,7 +2,7 @@
 
 Atualização da interface do HTML registrada em [HTML_INTEGRATION.md](HTML_INTEGRATION.md). Ela acrescenta as paletas e a rota própria de Explorar ao Kazzu existente.
 
-Sequência e nomes seguem o [diagnóstico original](../../UI_UX_AUDIT/03_SCREEN_BY_SCREEN.md). As descrições identificam a implementação ou a dependência. A confirmação por execução está no [relatório de testes](TEST_REPORT.md).
+Sequência e nomes seguem o [diagnóstico original](../ui-audit/03_SCREEN_BY_SCREEN.md). As descrições identificam a implementação ou a dependência. A confirmação por execução está no [relatório de testes](../tests/TEST_REPORT.md).
 
 | Nº | Superfície | Decisão e comportamento |
 |---|---|---|

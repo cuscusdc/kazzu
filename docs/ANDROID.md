@@ -1,33 +1,24 @@
 # Kazzu no Android
 
-Pipeline para compilar, assinar e publicar o APK do Kazzu **sem Android Studio, sem Gradle e sem nenhum serviço pago ou do Google**. A partir da v0.2 a UI do APK é a **v2 mobile-first** (vidro real, YouTube Music padrão; `docs/UI_NOTES.md`).
+A UI v6 de produção é composta em `kazzu-app/src/android_app.rs`. O Rust controla o áudio, a fila, o SQLite e os provedores. O global Slint `AppBridge` recebe os modelos e encaminha os comandos. A v5 continua sendo o ponto de entrada visual desktop. O estado de implementação e as validações pendentes estão em [IMPLEMENTATION_PROGRESS.md](status/IMPLEMENTATION_PROGRESS.md).
 
-Estado: **alpha**. Compila, assina, instala e abre num emulador Android 14 (x86_64, KVM). **Não foi testado em aparelho real** (nem em ARM); ver "Verificação".
-
-## Decisões
-
-| Tema | Escolha | Por quê |
-|---|---|---|
-| Backend de UI | `slint` com feature `backend-android-activity-06` (NativeActivity) | É o backend oficial do Slint para Android; documentado e mantido pelo próprio projeto. **Não** usa winit; o renderer é sempre **Skia** (conferido no código do backend; as features `renderer-femtovg`/`renderer-software` do `Cargo.toml` são inertes lá), que tem `backdrop-blur` real |
-| Atividade | `android.app.NativeActivity` do sistema (`hasCode="false"`) | Sem código Java/Kotlin próprio → sem Gradle. O Slint compila um pequeno helper Java (teclado/IME) no build e o embute em `libkazzu_app.so` |
-| Empacotamento | `scripts/build-apk.sh`: `cargo rustc --crate-type cdylib` + `aapt2` + `zipalign` + `apksigner` | Só usa ferramentas oficiais do SDK/NDK. `cargo-apk2`/`xbuild`/`cargo-ndk`+Gradle também funcionam com o Slint (a doc do Slint lista os quatro), mas cada um é mais uma ferramenta/versão a manter; o script tem ~120 linhas e roda igual no CI. O crate segue `lib` no desktop: o `cdylib` é pedido só na linha de comando do Android |
-| Áudio | `cpal` 0.18, backend **AAudio** nativo | O cpal 0.18 tem backend AAudio próprio (`cpal::host::aaudio`, via `ndk`); **não usa Oboe**, então não precisa de libc++ separada nem de C++ extra. API mínima 26 (Android 8) |
-| Opus | libopus compilada junto (`symphonia-adapter-libopus` com `bundled`, ativado só no Android em `kazzu-app/Cargo.toml`) | No Android não há libopus do sistema. Precisa de cmake+ninja (os do SDK) |
-| Seletor de pastas | **Sem seletor** nesta versão. O app lê a pasta **`Music`** do armazenamento compartilhado com a permissão `READ_MEDIA_AUDIO` (Android 13+) / `READ_EXTERNAL_STORAGE` (Android 8–12), pedida em tempo de execução via JNI. O botão "Adicionar pasta" adiciona/reescaneia `Music` | O seletor do sistema (SAF, `ACTION_OPEN_DOCUMENT_TREE`) devolve URIs de conteúdo, não caminhos: exigiria trocar o scan por `ContentResolver`/MediaStore. A permissão de mídia dá leitura direta por caminho nos arquivos de áudio, que é o que o scan (`walkdir` + `lofty`) já faz. `rfd` fica só no desktop |
-| Dados do app | Banco e configuração em `files/` do app (armazenamento interno, sem permissão). `directories` não funciona no Android, então o `android_main` passa os caminhos em `Options` | Nada da lógica do app precisou mudar |
-| Logs | `android_logger` → `adb logcat -s kazzu` | Nada sai do aparelho |
-| `targetSdk` | 34 (`minSdk` 26) | A UI v2 já usa as áreas seguras (`Window.safe-area-insets` do backend Slint → `AppState.safe-*`); dá para subir para 35 depois de testar em Android 15 |
-| ABIs | `arm64-v8a` (padrão, publicado). `x86_64` só para emulador. `armeabi-v7a` compila mas não é publicado | Celulares atuais são arm64; um APK universal triplicaria o tamanho (o Skia pesa ~20 MB por ABI) |
-
-### Permissões (todas declaradas em `android/AndroidManifest.xml`)
-
-| Permissão | Para quê |
+| Componente | Integração |
 |---|---|
-| `INTERNET` | YouTube Music (provedor padrão, sem conta) e as capas dos itens vistos. Só há rede na abertura do Início e por ação do usuário |
-| `READ_MEDIA_AUDIO` | Ler as músicas locais (Android 13+) |
-| `READ_EXTERNAL_STORAGE` (`maxSdkVersion=32`) | Idem, Android 8 a 12 |
+| Atividade | `KazzuActivity` estende `NativeActivity`. A ponte Java recebe os resultados do seletor de documentos, integra foco de áudio e hospeda as funções do sistema que precisam de uma classe Android. |
+| Acessibilidade | `accessibility.rs` projeta os modelos do `AppBridge` numa árvore com IDs estáveis; `KazzuActivity` instala um `AccessibilityNodeProvider` no decor view e encaminha cliques, incrementos e remoção da fila ao backend. TalkBack ainda exige validação no aparelho. |
+| Ciclo de vida | O motor e a qualidade remota sobrevivem à recriação da Activity; cada geração recebe um clone do handle e reidrata o `AppBridge` pelo snapshot do motor. Mudanças de configuração preservam `KazzuMediaService` e o foco de áudio; o encerramento real chama `nativeShutdown`. |
+| Player | CPAL e motor compartilhado. A fila contém entradas locais e remotas, com resolução remota no momento de abrir ou preparar a faixa seguinte. |
+| Segundo plano | `KazzuMediaService` publica estado e controles por `MediaSession` e notificação `MediaStyle`. Apoia playback ao esconder ou bloquear a tela enquanto a Activity e o processo estão vivos. |
+| Persistência | `getFilesDir()` contém SQLite, configuração, preferências, biblioteca YTM e cópias importadas. As capas escolhidas pelo usuário são persistidas com suas playlists. |
+| Cache | `getCacheDir()` contém capas recriáveis, metadados YTM e streams completos sujeitos à política LRU do motor. |
+| Arquivos locais | SAF concede leitura persistente aos diretórios escolhidos. Um importador copia arquivos com substituição atômica para a biblioteca privada e reutiliza o scanner existente. Edição de tags se aplica às cópias. |
+| Provedores | YouTube Music visitante para reprodução. Importação OAuth de coleções usa os conectores existentes e descarta o token depois da solicitação. |
+| Privacidade | Histórico e Replay são locais. Last.fm envia scrobbles somente após a autorização explícita, com a sessão protegida pelo Android Keystore. Controle e salas LAN são iniciados pelo usuário, protegidos por código efêmero e expirados após até 30 minutos. |
+| Empacotamento | O script existente usa `javac` + `d8` para a ponte Java e mantém `aapt2`, `zipalign` e `apksigner`. SDK mínimo 26 e target 34 no manifesto. |
 
-Nada mais: sem serviços Google/Firebase/analytics, sem `WAKE_LOCK`, sem notificações, sem serviço em foreground (ainda; ver Pendências).
+O vídeo usa o [player oficial do YouTube](https://developers.google.com/youtube/terms/required-minimum-functionality), com opção de abrir externamente quando a incorporação estiver indisponível. A integração [Last.fm](https://www.last.fm/api/authspec) requer uma chave e um segredo válidos antes da autorização no navegador. Em Linux e macOS, KAZZU_DISCORD_APPLICATION_ID habilita presença pelo [IPC local do Discord](https://docs.discord.com/developers/topics/rpc) quando o cliente está em execução.
+
+O manifesto pede Internet para provedores e LAN e as permissões para o serviço de mídia. O SAF concede acesso aos arquivos selecionados pelo usuário. Logs do aplicativo permanecem no logcat.
 
 ## Ambiente de build (o que foi instalado)
 
@@ -77,13 +68,15 @@ O APK de release é assinado com uma chave **nova** gerada para o Kazzu:
 
 1. copie os dois arquivos para um pendrive/HD externo e/ou para um gerenciador de senhas (anexo seguro, ex.: KeePassXC, gratuito);
 2. guarde uma cópia em outro lugar que não seja este SSD (se o SSD falhar, a chave some junto);
-3. opcional para o CI: `base64 -w0 ~/.android/kazzu-release.jks | gh secret set KAZZU_KEYSTORE_B64 -R cuscusdc/altty` e `gh secret set KAZZU_KEYSTORE_PASSWORD -R cuscusdc/altty < ~/.android/kazzu-release.pass` (o GitHub guarda cifrado e nunca mostra de volta; não substitui o backup).
+3. opcional para o CI: `base64 -w0 ~/.android/kazzu-release.jks | gh secret set KAZZU_KEYSTORE_B64 -R cuscusdc/kazzu` e `gh secret set KAZZU_KEYSTORE_PASSWORD -R cuscusdc/kazzu < ~/.android/kazzu-release.pass` (o GitHub guarda cifrado e nunca mostra de volta; não substitui o backup).
 
 Para conferir a impressão digital da chave (sem expor a senha): `keytool -list -v -keystore ~/.android/kazzu-release.jks -storepass:file ~/.android/kazzu-release.pass | grep SHA256`.
 
+Para fixar o certificado oficial, configure KAZZU_SIGNER_SHA256 no ambiente local ou nas variáveis do repositório usadas pelo workflow. O script compara a impressão digital do APK com o valor esperado em builds oficiais.
+
 ## CI (GitHub Actions, gratuito)
 
-`.github/workflows/android.yml`:
+`.github/workflows/build.yml`:
 
 - push de tag `v*` → compila, assina e anexa `kazzu-<versão>-arm64-v8a.apk` + `.sha256` à release da tag (prerelease se a tag tiver `-`);
 - pull request / execução manual → só compila (artefato do workflow, chave descartável).
@@ -100,7 +93,7 @@ gh release create v0.1.0-alpha.2 --prerelease --title "Kazzu 0.1.0-alpha.2" --no
 
 (ou só empurrar a tag e deixar o CI fazer, com os segredos cadastrados). O repositório é **privado**: o link da release só abre logado numa conta com acesso (no celular, entre no GitHub pelo navegador antes de baixar o APK).
 
-## Verificação (v0.1.0-alpha.1)
+## Verificação histórica (v0.1.0-alpha.1)
 
 **Emulador** (AVD `kazzu34`: Android 14 / API 34, imagem AOSP x86_64, KVM, GPU por software `swiftshader_indirect`), com o APK `x86_64` (mesmo código do arm64):
 
@@ -123,7 +116,7 @@ gh release create v0.1.0-alpha.2 --prerelease --title "Kazzu 0.1.0-alpha.2" --no
 - capas em branco: **causa encontrada**, não era render. Com a permissão só de áudio o Android não deixa ler `cover.jpg` da pasta; capas embutidas na tag aparecem. Capa ausente agora mostra o placeholder `disc`. Pedir `READ_MEDIA_IMAGES` fica como decisão do autor;
 - "Voltar" não fechava player/detalhe: agora o `FocusScope` raiz recebe `Key.Back` e chama `go-back()` (fecha folha → fila → player → detalhe → volta ao Início → sai).
 
-## Verificação (v0.2.0-alpha.3, emulador x86_64)
+## Verificação histórica (v0.2.0-alpha.3, emulador x86_64)
 
 Emulador AVD `kazzu34` (Android 14, KVM, `-gpu swiftshader_indirect`, 1080×2400, navegação por 3 botões), APK `--debug-sign`:
 
@@ -134,13 +127,23 @@ Emulador AVD `kazzu34` (Android 14, KVM, `-gpu swiftshader_indirect`, 1080×2400
 - biblioteca local (`adb push` em `/sdcard/Music`): indexa; capa embutida aparece, `cover.jpg` não (permissão).
 - **Não verificado**: som real (emulador sem áudio), aparelho físico (ARM), TalkBack, teclado sobre a folha Nova playlist, desempenho do blur em GPU real, segundo plano/tela apagada.
 
-## Pendências para o Android (próximas etapas)
+## Validação da integração atual
 
-- **Áudio em segundo plano**: hoje a música para quando o app vai para segundo plano/tela apagada (o sistema pode matar o processo). Falta *foreground service* (tipo `mediaPlayback`) + notificação com controles + `MediaSession` (fones, tela de bloqueio, Bluetooth) via JNI; exige código Java mínimo (ou `GameActivity`/helper dex) e as permissões `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` e `POST_NOTIFICATIONS` (Android 13+). Gerenciar foco de áudio (`AudioManager`) e "ruído" (fone desconectado).
-- **Seletor de pastas / outras fontes**: SAF (`ACTION_OPEN_DOCUMENT_TREE`) + `ContentResolver`, ou scan por MediaStore, para músicas fora de `Music` (hoje só `Music`).
-- **Área segura / borda a borda**: testar em Android 15 (targetSdk 35), navegação por gestos e recorte da câmera; teclado sobre as folhas (`adjustResize`).
-- **Desempenho**: medir blur/Skia em aparelho de entrada; a opção "reduzir transparência" já existe na UI.
-- **Teste em aparelho real** (arm64), com fones Bluetooth, rotação, bloqueio de tela, 16 KB de página.
-- Reprodução em rede (YouTube Music) usa a permissão `INTERNET` declarada; *cleartext* continua bloqueado (HTTPS apenas).
-- F-Droid: o APK é reproduzível em tese (sem binários proprietários além do Skia pré-compilado do `rust-skia`, que é baixado no build); para o F-Droid seria preciso compilar o Skia a partir do fonte.
-- iOS fica para depois (Slint 1.19 ainda trata como experimental).
+A revisão desta implementação foi exclusivamente estática. Antes de atribuir aceite funcional, valide o bootstrap e a v6 no aparelho, a navegação do TalkBack pela árvore publicada, os controles e a remoção da fila por leitor de tela, a troca de faixa e de rota de áudio, a recriação da Activity em rotação com reprodução ativa, o bloqueio de tela, a retomada do processo, a reprodução offline já armazenada, a entrada do SAF e a restauração das permissões. Valide também a assinatura com credenciais reais e a compatibilidade do desktop.
+
+O escopo restante e o ponto de retomada estão em [IMPLEMENTATION_PROGRESS.md](status/IMPLEMENTATION_PROGRESS.md). Os resultados históricos acima se referem aos APKs indicados nas respectivas seções.
+
+### Mudanças recentes (consolidação pré-compilação)
+
+- Scrobble Last.fm corrigido para faixas locais e remotas (ordem `TrackEnded`/`TrackChanged` não impede mais o envio).
+- `onDestroy` da Activity preserva engine, executores e progresso em recriações (rotação); `nativeShutdown`/`stopService` só quando realmente destrói.
+- Backup v2 exporta/importa curtidas e histórico além de playlists, preferências e capas; credenciais e áudio continuam de fora.
+- Botões Compartilhar e Vídeo do player conectados a `AppBridge.share-now()`/`watch-now()` (funcionais, sem toast).
+- Versão exibida sincronizada com `Cargo.toml` (`0.6.0`).
+- `crates/kazzu-app/Cargo.toml` declara `[lib] crate-type = ["cdylib"]`, produzindo `libkazzu_app.so` no Android.
+
+### Mudanças desta rodada (última estática antes da compilação)
+
+- `browse_folders` deixa de ser stub: abrir/remover/escanear pastas locais via SAF estão completos (`remove_folder` e `rescan` já existiam).
+- Canais de eventos do motor aumentados (`EVENT_CAPACITY` 4096→16384, `STREAM_EVENT_CAPACITY` 256→1024) sem bloquear a thread de áudio.
+- Placeholders `comingSoon` do índice de Ajustes substituídos por rows informativas (Last.fm, Discord, Criar sala, Entrar com código), sem simular funcionamento.

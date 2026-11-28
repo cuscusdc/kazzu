@@ -11,10 +11,10 @@ export component Glass inherits Rectangle {
     in property <color> tint: UI.palette.high;
     in property <length> radius: UI.card-radius;
     border-radius: root.radius;
-    background: UI.battery ? root.tint : root.tint.brighter((UI.glass[3] - 100) / 150).with-alpha((92 - UI.glass[2] * 0.8) / 100);
+    background: (UI.battery || UI.reduced-glass) ? root.tint : root.tint.brighter((UI.glass[3] - 100) / 150).with-alpha((92 - UI.glass[2] * 0.8) / 100);
     border-width: 1px;
     border-color: UI.palette.ink.with-alpha(0.11 + UI.glass[0] / 600);
-    backdrop-blur: UI.battery ? 0px : UI.glass[1] * 1px * (UI.radios[4] == 1 ? 0.5 : 1);
+    backdrop-blur: (UI.battery || UI.reduced-glass) ? 0px : UI.glass[1] * 1px * (UI.effects == 1 ? 0.5 : 1);
     inner-shadow-color: UI.battery ? transparent : #ffffff.with-alpha(UI.glass[0] / 420);
     inner-shadow-blur: 12px;
     inner-shadow-spread: 1px;

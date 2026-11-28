@@ -1,17 +1,24 @@
-# Build remoto do Kazzu (somente runners padrão do GitHub Actions).
+# Build remoto do Kazzu (somente Android e iPhone, sem releases oficiais).
 #
-# Execução manual em qualquer branch, inclusive feat/cuscusdc:
-#   gh workflow run build.yml --ref feat/cuscusdc
-#
-# Tags v* compilam os três alvos e anexam tudo à release da tag.
+# Execução manual:
+#   gh workflow run build.yml --ref feat/cuscusdc -f platform=android
+#   gh workflow run build.yml --ref feat/cuscusdc -f platform=ios
+#   gh workflow run build.yml --ref feat/cuscusdc -f platform=both
 
 name: build
 
 on:
-  push:
-    tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: "Plataforma"
+        required: true
+        default: both
+        type: choice
+        options:
+          - android
+          - ios
+          - both
 
 permissions:
   contents: read
@@ -35,32 +42,21 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
-      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
       - name: Calcular versão
         id: v
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            v="${GITHUB_REF_NAME#v}"
-          else
-            v="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)-ci.${GITHUB_RUN_NUMBER}"
-          fi
+          v="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)-ci.${GITHUB_RUN_NUMBER}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if [[ "$v" == *-* ]]; then
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
 
   android:
     name: Android ARM64 (APK)
+    if: inputs.platform == 'android' || inputs.platform == 'both'
     needs: meta
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    outputs:
-      release_key: ${{ steps.sign.outputs.release_key }}
     env:
       CARGO_BUILD_JOBS: "2"
     steps:
@@ -70,6 +66,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+
+      - name: Conferir compilador da ponte Android
+        shell: bash
+        run: javac -version
 
       - name: Rust + alvo Android
         shell: bash
@@ -121,6 +121,8 @@ jobs:
 
       - name: Compilar e assinar o APK
         shell: bash
+        env:
+          KAZZU_SIGNER_SHA256: ${{ vars.KAZZU_SIGNER_SHA256 }}
         run: |
           flag=""
           [[ "${{ steps.sign.outputs.release_key }}" == "true" ]] || flag="--debug-sign"
@@ -135,114 +137,45 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  linux:
-    name: Linux x86_64 (binário)
+  ios:
+    name: iOS (device + simulador)
+    if: inputs.platform == 'ios' || inputs.platform == 'both'
     needs: meta
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    runs-on: macos-15
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dependências do sistema
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev libfontconfig1-dev pkg-config cmake
-
-      - name: Rust estável
+      - name: Rust + alvos Apple
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --target aarch64-apple-ios --target aarch64-apple-ios-sim
           rustup default stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: linux-x86_64
+          shared-key: ios-arm64
           cache-on-failure: true
 
-      - name: Compilar
+      - name: Verificar Xcode
         shell: bash
-        run: cargo build --release -p kazzu-app --bin kazzu --features opus-bundled
+        run: xcodebuild -version
 
-      - name: Preparar artefato
+      - name: Preparar projeto iOS
         shell: bash
-        run: |
-          mkdir -p dist
-          bin="kazzu-${{ needs.meta.outputs.version }}-linux-x86_64"
-          cp target/release/kazzu "dist/$bin"
-          chmod +x "dist/$bin"
-          sha256sum "dist/$bin" > "dist/$bin.sha256"
+        run: scripts/build-ios.sh --prepare
+
+      - name: Compilar para iPhone (device)
+        shell: bash
+        run: scripts/build-ios.sh --target device --version "${{ needs.meta.outputs.version }}"
+
+      - name: Compilar para simulador
+        shell: bash
+        run: scripts/build-ios.sh --target simulator --version "${{ needs.meta.outputs.version }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kazzu-linux-x86_64-${{ needs.meta.outputs.version }}
-          path: dist/*
+          name: kazzu-ios-${{ needs.meta.outputs.version }}
+          path: dist/ios/*
           if-no-files-found: error
           retention-days: 14
-
-  windows:
-    name: Windows x86_64 (exe)
-    needs: meta
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust estável
-        shell: bash
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: windows-x86_64
-          cache-on-failure: true
-
-      - name: Compilar
-        shell: bash
-        run: cargo build --release -p kazzu-app --bin kazzu --features opus-bundled
-
-      - name: Preparar artefato
-        shell: bash
-        run: |
-          mkdir -p dist
-          bin="kazzu-${{ needs.meta.outputs.version }}-windows-x86_64.exe"
-          cp target/release/kazzu.exe "dist/$bin"
-          sha256sum "dist/$bin" > "dist/$bin.sha256"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: kazzu-windows-x86_64-${{ needs.meta.outputs.version }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 14
-
-  release:
-    name: Publicar release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [meta, android, linux, windows]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Anexar binários à release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          pre=""
-          sign="APK assinado com a chave oficial."
-          [[ "${{ needs.meta.outputs.prerelease }}" == "true" ]] && pre="--prerelease"
-          [[ "${{ needs.android.outputs.release_key }}" == "true" ]] || sign="APK assinado com chave descartável (--debug-sign); não é build de distribuição."
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" $pre \
-            --title "Kazzu $tag" \
-            --notes "Kazzu $tag, compilado no GitHub Actions.
-
-$sign
-
-Artefatos: APK ARM64 (arm64-v8a), binário Linux x86_64 e executável Windows x86_64, cada um com arquivo .sha256. Ver docs/ANDROID.md."
-          mapfile -t files < <(find dist -type f | sort)
-          gh release upload "$tag" "${files[@]}" --clobber

@@ -175,7 +175,7 @@ export component KazzuPreview inherits Window {
             }
             if !UI.player-open : Rectangle {
                 x: 0; y: parent.height - self.height;
-                height: 158px + root.safe-bottom;
+                height: 172px + root.safe-bottom;
                 background: @linear-gradient(180deg, transparent, UI.palette.bg.with-alpha(0.28) 45%, UI.palette.bg.with-alpha(0.65));
             }
             island := BottomIsland {
@@ -188,8 +188,8 @@ export component KazzuPreview inherits Window {
         }
         player := Player {
             x: 0;
-            y: UI.player-open ? 0px : parent.height;
-            width: parent.width; height: parent.height;
+            y: UI.player-open ? 72px : parent.height;
+            width: parent.width; height: parent.height - 72px;
             top-inset: root.safe-top; bottom-inset: root.safe-bottom; left-inset: root.safe-left; right-inset: root.safe-right;
             visible: self.y < parent.height;
             shared-cover: root.shared-cover;
@@ -197,7 +197,7 @@ export component KazzuPreview inherits Window {
         }
         Artwork {
             x: UI.player-open ? player.cover-x : island.cover-x;
-            y: UI.player-open ? player.cover-y : island.y + island.cover-y;
+            y: UI.player-open ? player.y + player.cover-y : island.y + island.cover-y;
             width: UI.player-open ? player.cover-size : 42px;
             height: self.width;
             art: UI.track.cover;

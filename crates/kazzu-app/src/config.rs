@@ -70,6 +70,36 @@ impl StreamQualityPref {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct MobileAppearance {
+    pub glass: [f32; 5],
+    pub rounded: bool,
+    pub effects: i32,
+    pub vinyl: i32,
+    pub crossfade_seconds: i32,
+}
+
+impl Default for MobileAppearance {
+    fn default() -> Self {
+        Self { glass: [45.0, 24.0, 48.0, 107.0, 36.0], rounded: true, effects: 1, vinyl: 0, crossfade_seconds: 0 }
+    }
+}
+
+impl MobileAppearance {
+    pub fn sanitize(&mut self) {
+        let ranges = [(0.0, 100.0), (0.0, 40.0), (0.0, 100.0), (80.0, 130.0), (0.0, 100.0)];
+        let defaults = Self::default().glass;
+        for (i, (min, max)) in ranges.into_iter().enumerate() {
+            let value = self.glass[i];
+            self.glass[i] = if value.is_finite() { value.clamp(min, max) } else { defaults[i] };
+        }
+        self.effects = self.effects.clamp(0, 2);
+        self.vinyl = self.vinyl.clamp(0, 2);
+        self.crossfade_seconds = self.crossfade_seconds.clamp(0, 8) / 2 * 2;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub glass_style: i32,
     pub color_palette: i32,
@@ -91,6 +121,7 @@ pub struct Config {
     pub autoplay_radio: bool,
     /// O aviso "O YouTube Music já está ativo" já foi dispensado (nunca volta).
     pub first_run_dismissed: bool,
+    pub mobile_appearance: MobileAppearance,
 }
 
 impl Default for Config {
@@ -110,6 +141,7 @@ impl Default for Config {
             stream_quality: StreamQualityPref::Original,
             autoplay_radio: true,
             first_run_dismissed: false,
+            mobile_appearance: MobileAppearance::default(),
         }
     }
 }
@@ -152,6 +184,7 @@ impl Config {
         self.library_view = self.library_view.clamp(0, 1);
         self.library_density = self.library_density.clamp(0, 2);
         self.recent_searches.truncate(Self::MAX_RECENT);
+        self.mobile_appearance.sanitize();
         self
     }
 
@@ -185,6 +218,7 @@ impl Config {
         self.recent_searches.retain(|s| !s.eq_ignore_ascii_case(q));
         self.recent_searches.insert(0, q.to_owned());
         self.recent_searches.truncate(Self::MAX_RECENT);
+        self.mobile_appearance.sanitize();
     }
 }
 

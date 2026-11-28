@@ -1,9 +1,9 @@
-// Dados de demonstração extraídos da referência kazzu 0.5.html.
+// Tipos e configuração visual da interface móvel.
 export struct Track {
-    title: string, artist: string, album: string, duration: int,
+    id: string, local: bool, duration-label: string, title: string, artist: string, album: string, duration: int,
     tint: color, art: color, cover: image, glow: image, lyrics: [string], lyric-times: [int]
 }
-export struct Tile { title: string, sub: string, tone: color, glyph: string, cover: image }
+export struct Tile { id: string, kind: string, title: string, sub: string, tone: color, glyph: string, cover: image }
 export struct Category { title: string, tone: color, track-index: int }
 export struct ReplayTrack { title: string, sub: string, plays: int, cover: image }
 export struct Scheme { bg: color, player: color, card: color, high: color, ink: color, muted: color, outline: color, accent: color, on-accent: color, secondary: color, selected: color }
@@ -11,56 +11,7 @@ export struct SettingRow { title: string, sub: string, detail: string, glyph: im
 export struct SettingPage { title: string, rows: [SettingRow] }
 export struct GlassControl { title: string, sub: string, minimum: float, maximum: float, unit: string }
 
-export global Demo {
-    out property <[Track]> tracks: [
-        { title: "Creep", artist: "Radiohead", album: "Pablo Honey", duration: 238, tint: #362512, art: #d4a339, cover: @image-url("assets/cover-creep.jpg"), glow: @image-url("assets/cover-creep-glow.png") },
-        { title: "About A Girl", artist: "Nirvana", album: "Bleach", duration: 168, tint: #462c33, art: #ecd98a, cover: @image-url("assets/cover-about-girl.jpg"), glow: @image-url("assets/cover-about-girl-glow.png") },
-        { title: "He Feels Bad", artist: "Helmet", album: "Meantime", duration: 244, tint: #3d0a0d, art: #c0392b, cover: @image-url("assets/cover-he-feels.jpg"), glow: @image-url("assets/cover-he-feels-glow.png") },
-        { title: "Dumb", artist: "Nirvana", album: "In Utero", duration: 173, tint: #332d18, art: #e3d287, cover: @image-url("assets/cover-dumb.jpg"), glow: @image-url("assets/cover-dumb-glow.png") },
-        { title: "Young Folks", artist: "Peter Bjorn and John", album: "Writer's Block", duration: 277, tint: #13331d, art: #6fd384, cover: @image-url("assets/cover-young-folks.jpg"), glow: @image-url("assets/cover-young-folks-glow.png") },
-        { title: "Feel Good Inc.", artist: "Gorillaz", album: "Demon Days", duration: 223, tint: #252e20, art: #b3c5a6, cover: @image-url("assets/cover-feel-good.jpg"), glow: @image-url("assets/cover-feel-good-glow.png") },
-        { title: "Schism", artist: "TOOL", album: "Lateralus", duration: 407, tint: #382417, art: #d6a25a, cover: @image-url("assets/cover-schism.jpg"), glow: @image-url("assets/cover-schism-glow.png") },
-        { title: "Bad Apple!!", artist: "nomico", album: "Lovelight", duration: 318, tint: #291e3e, art: #9472ee, cover: @image-url("assets/cover-bad-apple.jpg"), glow: @image-url("assets/cover-bad-apple-glow.png") }
-    ];
-    out property <[Tile]> playlists: [
-        { title: "Músicas que gostei", sub: "Playlist automática", tone: #9b4fd8, glyph: "♥", cover: @image-url("") },
-        { title: "vocaloids", sub: "cuscusdoce rael · 3 itens", tone: #2d3a5c, glyph: "♪", cover: @image-url("") },
-        { title: "Baboza", sub: "cuscusdoce rael · 2 itens", tone: #4a2b2b, glyph: "♪", cover: @image-url("") }
-    ];
-    out property <[Tile]> suggested: [
-        { title: "Grunge essencial", sub: "kazzu Curadoria · 4 músicas", tone: #3b4a2b, glyph: "♪", cover: @image-url("") },
-        { title: "Rock dos anos 90", sub: "kazzu Curadoria · 6 músicas", tone: #4a2b3f, glyph: "♪", cover: @image-url("") },
-        { title: "Clima alegre", sub: "kazzu Curadoria · 5 músicas", tone: #c98a1a, glyph: "☀", cover: @image-url("") }
-    ];
-    out property <[Tile]> artists: [
-        { title: "Scorpions", sub: "3 músicas", tone: #3a3a3a, glyph: "S", cover: @image-url("") },
-        { title: "Deftones", sub: "2 músicas", tone: #2c2c33, glyph: "D", cover: @image-url("") },
-        { title: "Pantera", sub: "2 músicas", tone: #3b2d24, glyph: "P", cover: @image-url("") },
-        { title: "Radiohead", sub: "1 música", tone: #d4a339, glyph: "R", cover: @image-url("assets/cover-creep.jpg") },
-        { title: "Nirvana", sub: "2 músicas", tone: #ecd98a, glyph: "N", cover: @image-url("assets/cover-about-girl.jpg") },
-        { title: "Helmet", sub: "1 música", tone: #c0392b, glyph: "H", cover: @image-url("assets/cover-he-feels.jpg") },
-        { title: "Peter Bjorn and John", sub: "1 música", tone: #6fd384, glyph: "K", cover: @image-url("assets/cover-young-folks.jpg") },
-        { title: "Gorillaz", sub: "1 música", tone: #b3c5a6, glyph: "G", cover: @image-url("assets/cover-feel-good.jpg") },
-        { title: "TOOL", sub: "1 música", tone: #d6a25a, glyph: "T", cover: @image-url("assets/cover-schism.jpg") },
-        { title: "nomico", sub: "1 música", tone: #9472ee, glyph: "N", cover: @image-url("assets/cover-bad-apple.jpg") }
-    ];
-    out property <[Category]> categories: [
-        { title: "Clima alegre", tone: #3b8a4b, track-index: 4 },
-        { title: "Em trânsito", tone: #a37200, track-index: 5 },
-        { title: "Energia", tone: #9c8936, track-index: 6 },
-        { title: "Festa", tone: #5534a7, track-index: 7 },
-        { title: "Foco", tone: #5b6169, track-index: 1 },
-        { title: "Games", tone: #2e3034, track-index: 7 },
-        { title: "Hanukkah", tone: #7d6b3a, track-index: 0 },
-        { title: "Músicas para relaxar", tone: #4b74b0, track-index: 3 },
-        { title: "Natal", tone: #0b5722, track-index: 2 },
-        { title: "Romance", tone: #7d0d0d, track-index: 0 }
-    ];
-    out property <[ReplayTrack]> replay: [
-        { title: "Even Flow (Extended Version)", sub: "Pearl Jam · 42 min", plays: 8, cover: @image-url("assets/replay-0.jpg") },
-        { title: "Circo", sub: "Venere Vai Venus · 24 min", plays: 7, cover: @image-url("assets/replay-1.jpg") },
-        { title: "Anjos (Pra quem tem fé)", sub: "O Rappa · 16 min", plays: 2, cover: @image-url("assets/replay-2.jpg") }
-    ];
+export global Design {
     out property <[Scheme]> schemes: [
         { bg: #10100e, player: #1b1a18, card: #201f1d, high: #2e2c29, ink: #e7e6e4, muted: #d1cec7, outline: #a39d8f, accent: #edd8ab, on-accent: #473a1f, secondary: #c2e6b2, selected: #6f592a },
         { bg: #10100e, player: #1b1a18, card: #20201d, high: #2e2d29, ink: #e7e6e4, muted: #d1cfc7, outline: #a39f8f, accent: #f1e3a7, on-accent: #49401d, secondary: #bae9af, selected: #736426 },
@@ -90,7 +41,7 @@ export global Demo {
     ];
     out property <[SettingPage]> settings-groups: [
         { title: "", rows: [
-        { title: "Conta e integrações", sub: "@cuscusdocerael-o1h", detail: "", glyph: @image-url("assets/user.svg"), tag: "", target: 0, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
+        { title: "Conta e integrações", sub: "", detail: "", glyph: @image-url("assets/user.svg"), tag: "", target: 0, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Ouvir junto", sub: "Compartilhe um código e ouçam a mesma música, em sincronia", detail: "", glyph: @image-url("assets/group.svg"), tag: "", target: 1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
     ] },
         { title: "Qualidade de áudio", rows: [
@@ -98,11 +49,11 @@ export global Demo {
         { title: "Transmissão direta da fonte", sub: "", detail: "", glyph: @image-url("assets/radio.svg"), tag: "", target: 3, toggle-index: 4, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "No Wi-Fi", sub: "", detail: "", glyph: @image-url("assets/wifi.svg"), tag: "EM USO", target: 4, toggle-index: -1, radio-index: 0, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Nos dados móveis", sub: "", detail: "", glyph: @image-url("assets/signal.svg"), tag: "", target: 5, toggle-index: -1, radio-index: 1, choice: -1, action: "", disabled: false, kind: "action" },
-        { title: "Dolby Atmos", sub: "Este dispositivo não suporta Atmos, as músicas tocarão na versão padrão", detail: "", glyph: @image-url("assets/dolby.svg"), tag: "", target: 6, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: true, kind: "action" }
+        { title: "Dolby Atmos", sub: "", detail: "", glyph: @image-url("assets/dolby.svg"), tag: "", target: 6, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: true, kind: "action" }
     ] },
         { title: "Geral", rows: [
         { title: "Aparência", sub: "Material You, tema e formas", detail: "", glyph: @image-url("assets/brush.svg"), tag: "", target: -2, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
-        { title: "Downloads", sub: "", detail: "2.4 GB", glyph: @image-url("assets/download.svg"), tag: "", target: 7, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
+        { title: "Downloads", sub: "", detail: "", glyph: @image-url("assets/download.svg"), tag: "", target: 7, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Reprodução", sub: "", detail: "", glyph: @image-url("assets/play.svg"), tag: "", target: 8, toggle-index: -1, radio-index: 3, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Normalização de volume", sub: "Mesmo nível sonoro entre faixas", detail: "", glyph: @image-url("assets/gauge.svg"), tag: "", target: 9, toggle-index: 5, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Content Preferences", sub: "", detail: "", glyph: @image-url("assets/radio.svg"), tag: "", target: 10, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
@@ -114,10 +65,10 @@ export global Demo {
         { title: "Idioma", sub: "Português (Brasil)", detail: "", glyph: @image-url("assets/globe.svg"), tag: "", target: 16, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
     ] },
         { title: "Sobre e privacidade", rows: [
-        { title: "Histórico de reprodução e buscas", sub: "Personalizar recomendações e estatísticas", detail: "", glyph: @image-url("assets/history.svg"), tag: "", target: 17, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
+        { title: "Histórico de reprodução e buscas", sub: "", detail: "", glyph: @image-url("assets/history.svg"), tag: "", target: 17, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Limpar histórico recente", sub: "Apaga buscas recentes do dispositivo", detail: "", glyph: @image-url("assets/trash.svg"), tag: "", target: 18, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
         { title: "Atalhos de teclado", sub: "Comandos rápidos para teclado físico", detail: "", glyph: @image-url("assets/keyboard.svg"), tag: "", target: 19, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
-        { title: "Versão do kazzu", sub: "v1.4.2 (Liquid Glass Edition) • Código aberto", detail: "v1.4.2", glyph: @image-url("assets/info.svg"), tag: "", target: 20, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
+        { title: "Versão do kazzu", sub: "", detail: "", glyph: @image-url("assets/info.svg"), tag: "", target: 20, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
     ] },
         { title: "", rows: [
         { title: "kazzu para Wear OS", sub: "", detail: "Nenhum relógio", glyph: @image-url("assets/watch.svg"), tag: "", target: 21, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
@@ -125,15 +76,15 @@ export global Demo {
     ];
     out property <[SettingPage]> settings-pages: [
         { title: "Conta e integrações", rows: [
-        { title: "Perfil", sub: "cuscusdoce rael", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
-        { title: "Plano", sub: "Membro Free desde Out/2024", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
-        { title: "Last.fm", sub: "Não conectado", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" },
-        { title: "Discord", sub: "Não conectado", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" }
+        { title: "Perfil", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Plano", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Last.fm", sub: "Scrobble de reproduções", detail: "Configure em Ajustes › Conta e integrações.", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Discord", sub: "Presença em atividade", detail: "Indisponível no Android (requer Social SDK).", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Ouvir junto", rows: [
         { title: "Como funciona", sub: "Compartilhe um código e ouçam a mesma música, em sincronia.", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
-        { title: "Criar sala", sub: "Gera um código para compartilhar", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" },
-        { title: "Entrar com código", sub: "Digite o código de um amigo", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" }
+        { title: "Criar sala", sub: "Gera um código para compartilhar", detail: "Abra em Ajustes › Ouvir junto.", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Entrar com código", sub: "Digite o código de um amigo", detail: "Abra em Ajustes › Ouvir junto.", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Fontes", rows: [
         { title: "Streaming", sub: "Usar o catálogo online", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 7, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
@@ -145,15 +96,15 @@ export global Demo {
     ] },
         { title: "Qualidade no Wi-Fi", rows: [
         { title: "Qualidade", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "heading" },
-        { title: "Alta fidelidade Lossless • 320 kbps", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 0, action: "", disabled: false, kind: "radio" },
-        { title: "Master Hi-Res FLAC • 24-bit/96kHz", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 1, action: "", disabled: false, kind: "radio" },
-        { title: "Padrão Econômico • 160 kbps", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 2, action: "", disabled: false, kind: "radio" },
+        { title: "Original do provedor", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 0, action: "", disabled: false, kind: "radio" },
+        { title: "Qualidade alta", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 1, action: "", disabled: false, kind: "radio" },
+        { title: "Economizar dados", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 2, action: "", disabled: false, kind: "radio" },
         { title: "Automático (Adapta à conexão)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 0, choice: 3, action: "", disabled: false, kind: "radio" }
     ] },
         { title: "Dados móveis", rows: [
         { title: "Qualidade", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "heading" },
-        { title: "Alta fidelidade Lossless • 320 kbps", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 1, choice: 0, action: "", disabled: false, kind: "radio" },
-        { title: "Padrão Econômico • 160 kbps", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 1, choice: 1, action: "", disabled: false, kind: "radio" },
+        { title: "Original do provedor", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 1, choice: 0, action: "", disabled: false, kind: "radio" },
+        { title: "Economizar dados", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 1, choice: 1, action: "", disabled: false, kind: "radio" },
         { title: "Automático (Adapta à conexão)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 1, choice: 2, action: "", disabled: false, kind: "radio" },
         { title: "Economizar dados", sub: "Reduz a qualidade em redes móveis", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 10, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" }
     ] },
@@ -166,11 +117,11 @@ export global Demo {
         { title: "Alta (320 kbps)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 2, choice: 0, action: "", disabled: false, kind: "radio" },
         { title: "Padrão (160 kbps)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 2, choice: 1, action: "", disabled: false, kind: "radio" },
         { title: "Baixar só no Wi-Fi", sub: "Evita usar dados móveis", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 11, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
-        { title: "Local", sub: "/storage/emulated/0/Music", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
+        { title: "Local", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Reprodução", rows: [
-        { title: "Transição entre músicas", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "heading" },
-        { title: "Desativado (corte seco)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 3, choice: 0, action: "", disabled: false, kind: "radio" },
+        { title: "Transição entre músicas", sub: "Disponível para WAV e FLAC locais com formato de saída compatível", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "heading" },
+        { title: "Desativado (gapless quando compatível)", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 3, choice: 0, action: "", disabled: false, kind: "radio" },
         { title: "Transição de 2s", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 3, choice: 1, action: "", disabled: false, kind: "radio" },
         { title: "Transição de 4s", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 3, choice: 2, action: "", disabled: false, kind: "radio" },
         { title: "Transição de 6s", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 3, choice: 3, action: "", disabled: false, kind: "radio" },
@@ -191,23 +142,25 @@ export global Demo {
         { title: "O que muda", sub: "Economia: sem vidro desfocado, malha animada nem grão. Equilibrado: desfoque reduzido. Aparelhos modestos começam em Economia.", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Música local", rows: [
-        { title: "Pasta indexada", sub: "/storage/emulated/0/Music", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
-        { title: "Pasta de downloads", sub: "/storage/emulated/0/Download", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Selecionar pasta", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "folder", disabled: false, kind: "action" },
+        { title: "Pasta de downloads", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Verificar duplicatas", sub: "Compara o conteúdo dos arquivos importados", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "findDuplicates", disabled: false, kind: "action" },
+        { title: "Importar playlist M3U", sub: "Usa músicas já indexadas na biblioteca", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "importM3u", disabled: false, kind: "action" },
         { title: "Escanear agora", sub: "Atualiza a biblioteca local", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "scanLibrary", disabled: false, kind: "action" }
     ] },
         { title: "Armazenamento", rows: [
-        { title: "Cache offline", sub: "2.4 GB · 82 faixas", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
-        { title: "Limpar cache", sub: "As músicas continuam disponíveis para streaming", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "clearCache", disabled: false, kind: "action" }
+        { title: "Cache offline", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Limpar cache de áudio", sub: "Remove as cópias descartáveis dos streams", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "clearCache", disabled: false, kind: "action" }
     ] },
         { title: "Backup e restauração", rows: [
-        { title: "Criar backup", sub: "Salva playlists e configurações", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" },
-        { title: "Restaurar backup", sub: "Escolhe um arquivo salvo", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "comingSoon", disabled: false, kind: "action" }
+        { title: "Criar backup", sub: "Salva playlists e configurações", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "createBackup", disabled: false, kind: "action" },
+        { title: "Restaurar backup", sub: "Adiciona as playlists e aplica as preferências salvas", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "restoreBackup", disabled: false, kind: "action" }
     ] },
         { title: "Diversos", rows: [
-        { title: "Histórico de reprodução e buscas", sub: "Personalizar recomendações e estatísticas", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
+        { title: "Histórico de reprodução e buscas", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
         { title: "Limpar histórico recente", sub: "Apaga buscas recentes do dispositivo", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "clearSearchHistory", disabled: false, kind: "action" },
         { title: "Atalhos de teclado", sub: "Comandos para teclado físico", detail: "", glyph: @image-url(""), tag: "", target: 19, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" },
-        { title: "Versão do kazzu", sub: "v1.4.2", detail: "", glyph: @image-url(""), tag: "", target: 20, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
+        { title: "Versão do kazzu", sub: "", detail: "", glyph: @image-url(""), tag: "", target: 20, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "action" }
     ] },
         { title: "Idioma", rows: [
         { title: "Idioma do app", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "heading" },
@@ -216,7 +169,7 @@ export global Demo {
         { title: "Español", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: 5, choice: 2, action: "", disabled: false, kind: "radio" }
     ] },
         { title: "Histórico de reprodução e buscas", rows: [
-        { title: "Salvar histórico", sub: "Personalizar recomendações e estatísticas", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
+        { title: "Salvar histórico", sub: "", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: 6, radio-index: -1, choice: -1, action: "", disabled: false, kind: "toggle" },
         { title: "O que é salvo", sub: "Reproduções e buscas recentes", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Limpar histórico recente", rows: [
@@ -231,7 +184,7 @@ export global Demo {
         { title: "M", sub: "Mudo", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },
         { title: "Versão do kazzu", rows: [
-        { title: "Versão", sub: "1.4.2 (Liquid Glass Edition)", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
+        { title: "Versão", sub: "0.6.0", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
         { title: "Licença", sub: "MIT", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" },
         { title: "Código", sub: "Aberto", detail: "", glyph: @image-url(""), tag: "", target: -1, toggle-index: -1, radio-index: -1, choice: -1, action: "", disabled: false, kind: "info" }
     ] },

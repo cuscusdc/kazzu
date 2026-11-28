@@ -10,6 +10,7 @@ mod remote;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use kazzu_audio::{EngineHandle, StreamEvent};
@@ -28,7 +29,7 @@ use crate::worker::{DetailRef, Job, JobResult, JobRunner, QueueMode, Scope};
 use crate::ytm_vm;
 
 pub use remote::Entry;
-use remote::{Context, ToastAction};
+use remote::{Context, EngineRadio, ToastAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NavTab {
@@ -65,10 +66,17 @@ pub enum Msg {
     /// Eventos do streaming HTTP (URL vencida, rede caiu).
     Stream(StreamEvent),
     FolderPicked(Option<PathBuf>),
+    #[cfg(target_os = "android")]
+    StreamCacheCleared(std::io::Result<u64>),
+    #[cfg(target_os = "android")]
+    StreamRemoved(std::io::Result<bool>),
+    #[cfg(target_os = "android")]
+    StorageUsage { files: u64, cache: u64 },
     AccountFetched(Result<(Vec<crate::accounts::Import>, usize), String>),
     System(SystemPrefs),
     /// Quadros acima do orçamento por tempo demais: oferece "Reduzir transparência".
     SlowFrames,
+    RetryEngineRadio(u64),
 }
 
 pub type MsgSink = Arc<dyn Fn(Msg) + Send + Sync>;
@@ -80,11 +88,11 @@ const VOLUME_STEP: f32 = 0.05;
 /// Quantas próximas faixas a fila da UI mostra (o resto vira "e mais N"): fila de milhares não reconstrói milhares de linhas.
 pub const QUEUE_VIEW_MAX: usize = 100;
 /// View-models de faixas da fila guardados (LRU).
-const VM_CACHE_MAX: usize = 600;
+const VM_CACHE_MAX: usize = if cfg!(target_os = "android") { 240 } else { 600 };
 /// Faixas remotas lembradas para poder tocá-las pelo id da linha.
 const REMOTE_TRACKS_MAX: usize = 4000;
 /// Capas remotas decodificadas guardadas em memória.
-const COVER_CACHE_MAX: usize = 500;
+const COVER_CACHE_MAX: usize = if cfg!(target_os = "android") { 160 } else { 500 };
 /// Depois disto, uma capa pedida e ainda ausente (falhou, ou saiu do cache) pode ser pedida de novo.
 pub(crate) const COVER_RETRY: Duration = Duration::from_secs(30);
 
@@ -120,6 +128,16 @@ pub struct Controller<V: View> {
     cfg: Config,
     cfg_path: Option<PathBuf>,
     data_dir: Option<PathBuf>,
+    #[cfg(all(unix, not(target_os = "android")))]
+    discord: Option<crate::discord_presence::DiscordPresence>,
+    #[cfg(target_os = "android")]
+    stats_seq: u64,
+    #[cfg(target_os = "android")]
+    cache_dir: Option<PathBuf>,
+    #[cfg(target_os = "android")]
+    following_room: bool,
+    #[cfg(target_os = "android")]
+    followed_id: Option<String>,
 
     tab: NavTab,
     detail_open: bool,
@@ -144,6 +162,10 @@ pub struct Controller<V: View> {
     art_seq: u64,
     now_art: NowArtVm,
     recorded_current: bool,
+    listen_sample: Option<(Duration, Instant)>,
+    listened: Duration,
+    #[cfg(target_os = "android")]
+    listen_started: Option<i64>,
 
     liked: HashSet<String>,
     /// Curtidas alteradas aqui e ainda não confirmadas (uma atualização atrasada não pode desfazê-las).
@@ -171,6 +193,8 @@ pub struct Controller<V: View> {
 
     // ---- remoto (YouTube Music) ----
     remote_enabled: bool,
+    engine_quality: Option<Arc<AtomicI32>>,
+    engine_radio: Option<EngineRadio>,
     online: bool,
     home_seq: u64,
     explore: ExploreVm,
@@ -207,6 +231,16 @@ impl<V: View> Controller<V> {
             cfg,
             cfg_path,
             data_dir: None,
+            #[cfg(all(unix, not(target_os = "android")))]
+            discord: None,
+            #[cfg(target_os = "android")]
+            stats_seq: 0,
+            #[cfg(target_os = "android")]
+            cache_dir: None,
+            #[cfg(target_os = "android")]
+            following_room: false,
+            #[cfg(target_os = "android")]
+            followed_id: None,
             tab: NavTab::Home,
             detail_open: false,
             detail_ids: vec![],
@@ -229,6 +263,10 @@ impl<V: View> Controller<V> {
             art_seq: 0,
             now_art: NowArtVm::default(),
             recorded_current: false,
+            listen_sample: None,
+            listened: Duration::ZERO,
+            #[cfg(target_os = "android")]
+            listen_started: None,
             liked: HashSet::new(),
             pending_likes: HashMap::new(),
             home: HomeVm::default(),
@@ -251,6 +289,8 @@ impl<V: View> Controller<V> {
             account_pending: false,
             folder_list_seq: 0,
             remote_enabled: false,
+            engine_quality: None,
+            engine_radio: None,
             online: true,
             home_seq: 0,
             explore: ExploreVm::default(),
@@ -278,15 +318,37 @@ impl<V: View> Controller<V> {
         self.remote_enabled = true;
     }
 
+    pub(crate) fn enable_engine_remote(&mut self, quality: Arc<AtomicI32>) {
+        self.enable_remote();
+        self.engine_quality = Some(quality);
+    }
+
     /// Intervalo mínimo para pedir de novo uma capa que não chegou (padrão 30 s; testes encurtam).
     #[doc(hidden)]
     pub fn set_cover_retry(&mut self, d: Duration) {
         self.cover_retry = d;
     }
 
+    #[cfg(all(unix, not(target_os = "android")))]
+    pub(crate) fn enable_discord_from_env(&mut self) {
+        self.discord = crate::discord_presence::DiscordPresence::from_env();
+    }
+
+    #[cfg(all(unix, not(target_os = "android")))]
+    fn publish_discord(&self) {
+        if let Some(discord) = &self.discord {
+            discord.update(self.pb.now.as_ref().filter(|_| self.pb.playing));
+        }
+    }
+
     /// Onde gravar o arquivo de "Relatar um problema".
     pub fn set_data_dir(&mut self, dir: PathBuf) {
         self.data_dir = Some(dir);
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn set_cache_dir(&mut self, dir: PathBuf) {
+        self.cache_dir = Some(dir);
     }
 
     pub fn config(&self) -> &Config {
@@ -388,6 +450,30 @@ impl<V: View> Controller<V> {
 
     pub fn handle(&mut self, msg: Msg) {
         match msg {
+            #[cfg(target_os = "android")]
+            Msg::StreamRemoved(result) => {
+                match result {
+                    Ok(true) => self.notice("Cópia em cache removida.", false),
+                    Ok(false) => self.notice("A cópia já saiu do cache.", false),
+                    Err(_) => self.notice("Não foi possível remover a cópia.", true),
+                }
+                if self.detail_open && self.detail_vm.cached_audio {
+                    self.load_route(DetailRoute::Library(DetailRef::Downloads));
+                }
+                self.android_storage_usage();
+            }
+            #[cfg(target_os = "android")]
+            Msg::StorageUsage { files, cache } => self.view.set_storage(files, cache),
+            #[cfg(target_os = "android")]
+            Msg::StreamCacheCleared(result) => {
+                match result {
+                    Ok(bytes) => self.notice(&format!("Cache de áudio limpo. {} MiB liberados.", bytes / 1_048_576), false),
+                    Err(_) => self.notice("Não foi possível limpar todo o cache de áudio.", true),
+                }
+                self.android_storage_usage();
+            }
+
+            Msg::RetryEngineRadio(seq) => self.retry_engine_radio(seq),
             Msg::Engine(ev) => self.on_engine(ev),
             Msg::Stream(ev) => self.on_stream(ev),
             Msg::Job(r) => self.on_job(r),
@@ -504,11 +590,31 @@ impl<V: View> Controller<V> {
             JobResult::Queue { items, start, shuffle, label } => {
                 // fila gerenciada pelo motor (tudo local): o contexto remoto, se houver, acabou
                 self.ctx = None;
+                self.engine_radio = None;
                 self.stalled = false;
                 self.pb.origin = label;
                 self.pb.error.clear();
                 // O embaralhar escolhido pelo usuário vale para a nova fila (o motor reembaralha no Load). Só o
                 // pedido explícito ("Tudo em ordem aleatória", "Aleatório") liga o modo.
+                self.engine.load(items, start);
+                if shuffle && !self.pb.shuffle {
+                    self.engine.set_shuffle(true);
+                }
+                self.view.set_playback(&self.pb);
+            }
+            JobResult::PreparedQueue { seq, items, start, shuffle, label } => {
+                if seq != self.ctx_seq {
+                    return;
+                }
+                if items.is_empty() {
+                    self.notice("Não há músicas para tocar aqui.", true);
+                    return;
+                }
+                self.ctx = None;
+                self.stalled = false;
+                self.pb.origin = label;
+                self.pb.error.clear();
+                self.install_engine_radio(seq, &items, start);
                 self.engine.load(items, start);
                 if shuffle && !self.pb.shuffle {
                     self.engine.set_shuffle(true);
@@ -534,6 +640,69 @@ impl<V: View> Controller<V> {
                 self.restore_detail_scroll();
                 self.view.open_detail(true);
                 self.detail_open = true;
+            }
+            #[cfg(target_os = "android")]
+            JobResult::Lyrics { seq, lines } if seq == self.art_seq => self.view.set_lyrics(&lines),
+            #[cfg(target_os = "android")]
+            JobResult::Lyrics { .. } => {}
+            #[cfg(target_os = "android")]
+            JobResult::ListeningStats { seq, stats, export } => {
+                if export {
+                    self.android_export_stats(&stats);
+                } else if seq == self.stats_seq {
+                    self.view.set_listening_stats(&stats);
+                }
+            }
+            #[cfg(target_os = "android")]
+            JobResult::LocalTagsEdited(result) => match result {
+                Ok(()) => {
+                    self.notice("Metadados salvos na cópia local.", false);
+                    self.rescan();
+                }
+                Err(error) => self.notice(&error, true),
+            },
+            #[cfg(target_os = "android")]
+            JobResult::M3uImported { count, skipped } => {
+                self.notice(&format!("{count} faixas importadas. {skipped} sem correspondência única."), false);
+                self.jobs.submit(Job::Refresh);
+            }
+            #[cfg(target_os = "android")]
+            JobResult::BackupReady { result, lan, room } => match result {
+                Ok(json) if !lan && crate::android::export_backup(&json) => {}
+                Ok(json) if lan && room && crate::android::publish_room_backup(&json) => {}
+                Ok(json) if lan && crate::android::host_backup(&json) => {}
+                Ok(_) => self.notice("Não foi possível iniciar o compartilhamento do backup.", true),
+                Err(error) => self.notice(&error, true),
+            },
+            #[cfg(target_os = "android")]
+            JobResult::PeerSynced(result) => match result {
+                Ok(0) => {}
+                Ok(_) => self.jobs.submit(Job::Refresh),
+                Err(error) => log::warn!("sincronização LAN: {error}"),
+            },
+            #[cfg(target_os = "android")]
+            JobResult::BackupRestored(result) => match result {
+                Ok(backup) => {
+                    self.cfg = backup.config;
+                    self.engine.set_crossfade(Duration::from_secs(self.cfg.mobile_appearance.crossfade_seconds as u64));
+                    self.set_volume(self.cfg.volume);
+                    self.set_stream_quality(self.cfg.stream_quality);
+                    self.push_prefs();
+                    self.push_accent();
+                    self.jobs.submit(Job::Refresh);
+                    self.notice(&format!("{} playlists, {} curtidas e {} itens de histórico restaurados. {} faixas não encontradas.", backup.playlists, backup.liked, backup.history, backup.missing), false);
+                }
+                Err(error) => self.notice(&error, true),
+            },
+            #[cfg(target_os = "android")]
+            JobResult::RemoteLyrics { seq, result } => {
+                if seq == self.art_seq {
+                    match result {
+                        Ok(Some(lyrics)) => self.view.set_remote_lyrics(&lyrics.text, lyrics.source.as_deref().unwrap_or_default(), false),
+                        Ok(None) => self.view.set_remote_lyrics("", "", false),
+                        Err(_) => self.view.set_remote_lyrics("", "Não foi possível buscar a letra.", false),
+                    }
+                }
             }
             JobResult::NowArt { seq, art } => {
                 if seq == self.art_seq {
@@ -601,6 +770,9 @@ impl<V: View> Controller<V> {
     pub fn on_engine(&mut self, ev: PlaybackEvent) {
         match ev {
             PlaybackEvent::StatusChanged { status } => {
+                if status != PlaybackStatus::Playing {
+                    self.listen_sample = None;
+                }
                 self.pb.playing = status == PlaybackStatus::Playing;
                 self.pb.loading = status == PlaybackStatus::Buffering;
                 if self.pb.playing {
@@ -610,18 +782,27 @@ impl<V: View> Controller<V> {
                     }
                 }
                 self.view.set_playback(&self.pb);
+                #[cfg(all(unix, not(target_os = "android")))]
+                self.publish_discord();
             }
             PlaybackEvent::TrackChanged { item, duration } => {
-                self.record_listen_if_needed();
                 self.position = Duration::ZERO;
                 self.duration = duration;
                 self.recorded_current = false;
+                self.listen_sample = None;
+                self.listened = Duration::ZERO;
+                #[cfg(target_os = "android")]
+                {
+                    self.listen_started = None;
+                }
+                self.record_listen_if_needed();
                 self.pb.error.clear();
                 match item {
                     Some(item) => {
                         self.on_track_changed(&item);
                     }
                     None => {
+                        self.art_seq += 1;
                         self.pb.now = None;
                         self.pb.has_now = false;
                         self.pb.quality_label.clear();
@@ -633,10 +814,26 @@ impl<V: View> Controller<V> {
                 }
                 self.view.set_playback(&self.pb);
                 self.view.mark_playing(self.pb.now.as_ref().map(|t| t.id.as_str()));
+                #[cfg(all(unix, not(target_os = "android")))]
+                self.publish_discord();
                 self.push_progress();
                 self.unstall(true);
             }
             PlaybackEvent::Position { position, duration } => {
+                if self.pb.playing {
+                    #[cfg(target_os = "android")]
+                    if self.listen_started.is_none() {
+                        self.listen_started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                            .ok().map(|elapsed| elapsed.as_secs() as i64);
+                    }
+                    let now = Instant::now();
+                    if let Some((previous, sampled)) = self.listen_sample.replace((position, now))
+                        && let Some(delta) = position.checked_sub(previous)
+                        && delta <= now.saturating_duration_since(sampled) + Duration::from_millis(250)
+                    {
+                        self.listened = self.listened.saturating_add(delta);
+                    }
+                }
                 self.position = position;
                 if duration.is_some() {
                     self.duration = duration;
@@ -652,7 +849,9 @@ impl<V: View> Controller<V> {
                     if matches!(item.track.source, TrackSource::Local { .. }) {
                         self.jobs.submit(Job::RecordPlay { id: item.track.id.to_string(), listened_ms: ms });
                     }
-                    self.recorded_current = true;
+                    // não marca recorded_current aqui: o scrobble do Last.fm acontece em
+                    // record_listen_if_needed() quando TrackChanged chega, independentemente da ordem
+                    // em que TrackEnded e TrackChanged são emitidos pelo motor.
                 }
             }
             PlaybackEvent::QueueChanged { items, current } => {
@@ -692,6 +891,10 @@ impl<V: View> Controller<V> {
                 self.apply_output(&info);
                 self.view.set_playback(&self.pb);
             }
+            PlaybackEvent::SleepTimerElapsed => {
+                self.cancel_radio_resume();
+                self.view.sleep_timer_elapsed();
+            }
             PlaybackEvent::QueueFinished => {
                 self.pb.playing = false;
                 self.view.set_playback(&self.pb);
@@ -713,6 +916,57 @@ impl<V: View> Controller<V> {
                 self.toast(&text, true);
             }
         }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_restore_state(&mut self, state: PlaybackState) {
+        let status = state.status;
+        self.on_engine(PlaybackEvent::QueueChanged {
+            items: state.queue,
+            current: state.current,
+        });
+        self.pb.playing = status == PlaybackStatus::Playing;
+        self.pb.loading = status == PlaybackStatus::Buffering;
+        self.pb.shuffle = state.shuffle;
+        self.pb.repeat = match state.repeat {
+            RepeatMode::Off => RepeatVm::Off,
+            RepeatMode::One => RepeatVm::One,
+            RepeatMode::All => RepeatVm::All,
+        };
+        self.pb.volume = sane_unit(state.volume, self.pb.volume);
+        self.cfg.volume = self.pb.volume;
+        self.position = state.position;
+        self.duration = state.duration;
+        self.listened = state.position;
+        self.listen_sample = None;
+        self.listen_started = None;
+        self.recorded_current = false;
+        self.stalled = false;
+        if status == PlaybackStatus::Playing {
+            crate::android::request_playback_focus();
+            self.pb.error.clear();
+        }
+        if let Some(item) = self
+            .current
+            .and_then(|index| self.queue_items.get(index))
+            .cloned()
+        {
+            self.on_track_changed(&item);
+        } else {
+            self.pb.now = None;
+            self.pb.has_now = false;
+            self.pb.quality_label.clear();
+            self.pb.source.clear();
+            self.now_art = NowArtVm::default();
+            self.view.set_now_art(&self.now_art);
+            self.push_accent();
+        }
+        if let Some(info) = state.output.as_ref() {
+            self.apply_output(info);
+        }
+        self.view.set_playback(&self.pb);
+        self.view.set_volume(self.pb.volume);
+        self.push_progress();
     }
 
     /// "Original" só vale para arquivo que chega sem transformação; o stream do YouTube já vem comprimido (Opus/AAC),
@@ -739,6 +993,10 @@ impl<V: View> Controller<V> {
         }
         self.pb.now = Some(vm);
         self.art_seq += 1;
+        #[cfg(target_os = "android")]
+        if let TrackSource::Local { path } = &item.track.source {
+            self.jobs.submit(Job::Lyrics { seq: self.art_seq, path: path.clone() });
+        }
         match &item.track.cover {
             Some(CoverRef::File { path }) => self.jobs.submit(Job::NowArt { seq: self.art_seq, cover: Some(path.clone()) }),
             Some(CoverRef::Url { url }) => self.jobs.submit(Job::Remote(crate::remote::RemoteJob::NowArt { seq: self.art_seq, url: url.clone() })),
@@ -825,7 +1083,9 @@ impl<V: View> Controller<V> {
     }
 
     fn publish_queue(&mut self) {
-        let up: Vec<QueueItem> = self.upcoming().to_vec();
+        let up = self.upcoming();
+        #[cfg(target_os = "android")]
+        let queue_ids = up.iter().take(QUEUE_VIEW_MAX).map(|item| item.id).collect::<Vec<_>>();
         let mut tracks: Vec<TrackVm> = up
             .iter()
             .take(QUEUE_VIEW_MAX)
@@ -863,11 +1123,13 @@ impl<V: View> Controller<V> {
             tracks,
             summary: if count == 0 { String::new() } else { format::queue_summary(count, total) },
             more_label: if hidden == 0 { String::new() } else { format!("e mais {}", format::songs_label(hidden as u64)) },
-            note: if self.ctx.is_some() && self.cfg.autoplay_radio && self.remote_enabled { NOTE_AUTOPLAY.to_owned() } else { String::new() },
+            note: if (self.ctx.is_some() || self.engine_radio.is_some()) && self.cfg.autoplay_radio && self.remote_enabled { NOTE_AUTOPLAY.to_owned() } else { String::new() },
         };
         self.cover_pass(&mut vm);
         self.queue_vm = vm.clone();
         self.view.set_queue(&vm);
+        #[cfg(target_os = "android")]
+        self.view.set_queue_ids(&queue_ids);
     }
 
     fn entry_vm(&self, e: &Entry) -> TrackVm {
@@ -887,6 +1149,11 @@ impl<V: View> Controller<V> {
             _ => 0.0,
         };
         self.view.set_seek_available(self.duration.is_some_and(|d| !d.is_zero()));
+        #[cfg(target_os = "android")]
+        self.view.set_position_millis(
+            self.position.as_millis().min(u64::MAX as u128) as u64,
+            self.duration.map(|d| d.as_millis().min(u64::MAX as u128) as u64),
+        );
         self.view.set_progress(progress, &format::duration_label(self.position), &format::remaining_label(self.position, self.duration));
     }
 
@@ -895,12 +1162,27 @@ impl<V: View> Controller<V> {
             return;
         }
         let Some(now) = &self.pb.now else { return };
-        // histórico só de arquivos locais
-        if !ytm_vm::is_remote_id(&now.id) {
-            let long_enough = self.position >= LISTEN_MIN || self.duration.is_some_and(|d| self.position * 2 >= d && !d.is_zero());
-            if long_enough {
-                self.jobs.submit(Job::RecordPlay { id: now.id.clone(), listened_ms: self.position.as_millis() as u64 });
+        let measured = self.engine_quality.is_some() || cfg!(target_os = "android");
+        let listened = if measured { self.listened } else { self.position };
+        let long_enough = listened >= LISTEN_MIN
+            || self.duration.is_some_and(|duration| !duration.is_zero() && listened.saturating_mul(2) >= duration);
+        if long_enough {
+            let listened_ms = listened.as_millis().min(i64::MAX as u128) as u64;
+            if ytm_vm::is_remote_id(&now.id) {
+                if let Some(track) = self.remote_tracks.peek(&now.id).cloned() {
+                    self.jobs.submit(Job::RecordRemotePlay { track: Box::new(track), listened_ms });
+                }
+            } else {
+                self.jobs.submit(Job::RecordPlay { id: now.id.clone(), listened_ms });
             }
+        }
+        #[cfg(target_os = "android")]
+        if let (Some(started), Some(duration)) = (self.listen_started, self.duration)
+            && duration > Duration::from_secs(30)
+            && self.listened >= (duration / 2).min(Duration::from_secs(240))
+            && !now.title.is_empty() && !now.artist.is_empty()
+        {
+            crate::android::last_fm_scrobble(&now.title, &now.artist, &now.album, started, duration.as_secs() as i64);
         }
         self.recorded_current = true;
     }
@@ -986,12 +1268,23 @@ impl<V: View> Controller<V> {
                 self.detail_what = None;
                 self.detail_ids.clear();
                 self.detail_album = None;
-                if self.detail_open {
+                if self.detail_open || cfg!(target_os = "android") {
                     self.show_detail(DetailVm { state: LoadStateVm::Loading, ..Default::default() });
+                }
+                #[cfg(target_os = "android")]
+                if what == DetailRef::Downloads && let Some(cache) = self.engine.cache().cloned() {
+                    self.jobs.submit(Job::OpenCachedAudio { seq: self.detail_seq, cache });
+                    return;
                 }
                 self.jobs.submit(Job::OpenDetail { seq: self.detail_seq, what });
             }
         }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_close_detail(&mut self) {
+        self.view.open_detail(false);
+        self.detail_closed();
     }
 
     pub fn detail_closed(&mut self) {
@@ -1001,6 +1294,119 @@ impl<V: View> Controller<V> {
             pages.pop();
         }
         self.restore_visit();
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_room_playlist_track(&mut self, playlist: String, id: String, title: String, artist: String) {
+        if !self.library.playlists.iter().any(|item| item.id == playlist)
+            || id.is_empty() || id.len() > 32
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return;
+        }
+        let mut track = CoreTrack::new(id.clone(), title, TrackSource::Remote {
+            provider: kazzu_core::ProviderKind::YtMusic, id: id.clone(),
+        });
+        if !artist.is_empty() {
+            track.artists.push(kazzu_core::ArtistRef::named(artist));
+        }
+        self.jobs.submit(Job::AddToPlaylist {
+            playlist_id: playlist, track_id: ytm_vm::remote_id(&id), remote: Some(Box::new(track)),
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_set_following(&mut self, following: bool) {
+        self.following_room = following;
+        self.followed_id = None;
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_wait_for_room(&mut self) {
+        if self.following_room && self.followed_id.is_some() {
+            self.engine.pause();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_follow_track(&mut self, id: String, title: String, artist: String, position: i64, playing: bool) -> bool {
+        if !self.following_room || self.engine_quality.is_none() || id.is_empty() || id.len() > 32
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return false;
+        }
+        let position = Duration::from_millis(position.clamp(0, 86_400_000) as u64);
+        let now_matches = self.pb.now.as_ref().is_some_and(|track| ytm_vm::strip_remote(&track.id) == Some(id.as_str()));
+        if !now_matches {
+            if Some(&id) == self.followed_id.as_ref() && self.pb.loading {
+                return true;
+            }
+            if playing && !self.android_has_focus() {
+                return false;
+            }
+            let mut track = CoreTrack::new(id.clone(), title, TrackSource::Remote {
+                provider: kazzu_core::ProviderKind::YtMusic, id: id.clone(),
+            });
+            if !artist.is_empty() {
+                track.artists.push(kazzu_core::ArtistRef::named(artist));
+            }
+            self.ctx_seq += 1;
+            self.ctx = None;
+            self.engine_radio = None;
+            self.followed_id = Some(id);
+            self.engine.load_at(QueueItem::new(track, kazzu_core::StreamSource::Deferred), position, playing);
+        } else {
+            self.followed_id = Some(id);
+            if playing && !self.pb.playing && !self.pb.loading && self.android_has_focus() {
+                self.engine.play();
+            } else if !playing && (self.pb.playing || self.pb.loading) {
+                self.engine.pause();
+            }
+            if !self.pb.loading && self.position.abs_diff(position) > Duration::from_millis(1300) {
+                self.listen_sample = None;
+                self.engine.seek(position);
+            }
+        }
+        true
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_play_track(&mut self, id: &str) {
+        if self.android_has_focus() {
+            self.play_track(id);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_pause_for_system(&mut self) {
+        self.cancel_radio_resume();
+        self.engine.pause();
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_toggle_play(&mut self) {
+        if self.pb.playing || self.pb.loading || self.android_has_focus() {
+            self.toggle_play();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_media_seek(&mut self, position_ms: i64) {
+        self.listen_sample = None;
+        if let Some(duration) = self.duration {
+            let position = Duration::from_millis(position_ms.max(0) as u64).min(duration);
+            self.engine.seek(position);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_has_focus(&mut self) -> bool {
+        if crate::android::request_playback_focus() {
+            true
+        } else {
+            self.notice("A saída de áudio está ocupada.", true);
+            false
+        }
     }
 
     pub fn toggle_play(&mut self) {
@@ -1023,6 +1429,7 @@ impl<V: View> Controller<V> {
 
     /// `progress` 0..1.
     pub fn seek(&mut self, progress: f32) {
+        self.listen_sample = None;
         if let Some(d) = self.duration {
             let target = d.mul_f32(sane_unit(progress, 0.0));
             self.engine.seek(target);
@@ -1032,6 +1439,7 @@ impl<V: View> Controller<V> {
     }
 
     pub fn seek_relative(&mut self, secs: i64) {
+        self.listen_sample = None;
         let Some(d) = self.duration else { return };
         let step = secs.signum() * SEEK_STEP_SECS.max(secs.abs());
         let target = if step >= 0 { self.position + Duration::from_secs(step as u64) } else { self.position.saturating_sub(Duration::from_secs(step.unsigned_abs())) };
@@ -1166,7 +1574,11 @@ impl<V: View> Controller<V> {
     pub fn queue_track(&mut self, id: &str, mode: QueueMode) {
         if ytm_vm::is_remote_id(id) {
             if let Some(track) = self.remote_tracks.peek(&id.to_owned()).cloned() {
-                self.jobs.submit(Job::Remote(crate::remote::RemoteJob::ResolveQueued { track, quality: self.cfg.stream_quality.to_core(), play_next: mode == QueueMode::PlayNext }));
+                if self.engine_quality.is_some() {
+                    self.queued(vec![QueueItem::new(track, kazzu_core::StreamSource::Deferred)], mode == QueueMode::PlayNext);
+                } else {
+                    self.jobs.submit(Job::Remote(crate::remote::RemoteJob::ResolveQueued { track, quality: self.cfg.stream_quality.to_core(), play_next: mode == QueueMode::PlayNext }));
+                }
             }
         } else {
             self.jobs.submit(Job::QueueItems { id: id.to_owned(), mode });
@@ -1188,6 +1600,8 @@ impl<V: View> Controller<V> {
     }
 
     pub fn queue_clear(&mut self) {
+        self.ctx_seq += 1;
+        self.engine_radio = None;
         if let Some(ctx) = self.ctx.as_mut() {
             ctx.tail.clear();
             ctx.radio_exhausted = true;
@@ -1209,20 +1623,23 @@ impl<V: View> Controller<V> {
 
     #[cfg(target_os = "android")]
     pub fn add_folder(&mut self) {
-        crate::android::request_music_folder(crate::android::music_dir());
+        if !crate::android::select_music_folder() {
+            self.notice("Seletor de pastas indisponível.", true);
+        }
     }
 
-    pub fn browse_folders(&mut self, path: &str) {
-        #[cfg(target_os = "android")]
-        {
-            let music = crate::android::music_dir();
-            let root = music.parent().unwrap_or(&music).to_path_buf();
-            let path = if path.is_empty() { root.clone() } else { PathBuf::from(path) };
-            self.folder_list_seq += 1;
-            self.jobs.submit(Job::BrowseFolders { seq: self.folder_list_seq, path, root });
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_register_imports(&mut self) {
+        if let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")).filter(|dir| dir.is_dir()) {
+            self.add_folder_path(root);
         }
+    }
+
+    pub fn browse_folders(&mut self, _path: &str) {
+        #[cfg(target_os = "android")]
+        self.add_folder();
         #[cfg(not(target_os = "android"))]
-        let _ = path;
+        self.add_folder();
     }
 
     pub fn add_named_folder(&mut self, folder: &str) {
@@ -1232,7 +1649,7 @@ impl<V: View> Controller<V> {
             return;
         }
         #[cfg(target_os = "android")]
-        crate::android::request_music_folder(path);
+        self.add_folder();
         #[cfg(not(target_os = "android"))]
         self.add_folder_path(path);
     }
@@ -1330,6 +1747,346 @@ impl<V: View> Controller<V> {
         self.view.set_perf_offer(false);
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_set_playlist_cover(&mut self, id: String, bytes: Vec<u8>) {
+        self.jobs.submit(Job::SetPlaylistCover { id, bytes });
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_choose_playlist_cover(&mut self) {
+        let id = &self.detail_vm.editable_playlist;
+        if !id.is_empty() && !crate::android::select_playlist_cover(id) {
+            self.notice("Seletor de imagens indisponível.", true);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_restore_backup(&mut self, json: String) {
+        let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
+        self.jobs.submit(Job::RestoreBackup { root, json });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_sync_peer_playlists(&mut self, json: String) {
+        let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
+        self.jobs.submit(Job::SyncPeerPlaylists { root, json });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_host_room(&mut self, enabled: bool, share: bool, playlist: &str) {
+        crate::android::host_remote(enabled, share, playlist);
+        if enabled && share {
+            self.android_publish_room_backup();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_create_backup(&mut self, lan: bool) {
+        let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
+        self.jobs.submit(Job::ExportBackup { root, config: Box::new(self.cfg.clone()), lan, room: false });
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_publish_room_backup(&mut self) {
+        let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
+        self.jobs.submit(Job::ExportBackup { root, config: Box::new(self.cfg.clone()), lan: true, room: true });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_import_m3u(&mut self, title: String, contents: String) {
+        self.jobs.submit(Job::ImportM3u { title, contents });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_edit_tags(&mut self, id: &str, title: &str, artist: &str, album: &str, genre: &str) {
+        let Some(root) = self.data_dir.as_ref().map(|path| path.join("imported-music")) else { return };
+        if title.trim().is_empty() || [title, artist, album, genre].iter().any(|value| value.len() > 4096) {
+            self.notice("Informe um título e confira o tamanho dos campos.", true);
+            return;
+        }
+        let field = |value: &str| value.trim().to_owned();
+        self.jobs.submit(Job::EditLocalTags {
+            root, track_id: id.to_owned(), title: field(title), artist: field(artist),
+            album: field(album), genre: field(genre),
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_stats(&mut self, period: i32, export: bool) {
+        let Some(from) = crate::android::listening_period_start(period) else {
+            self.notice("Não foi possível calcular o período de escuta.", true);
+            return;
+        };
+        let until = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map_or(from, |elapsed| (elapsed.as_secs() as i64).saturating_add(1));
+        if !export {
+            self.stats_seq += 1;
+        }
+        self.jobs.submit(Job::ListeningStats { seq: self.stats_seq, from, until, export });
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_export_stats(&mut self, stats: &kazzu_library::ListeningStats) {
+        let ranks = |values: &[kazzu_library::ListeningRank]| values.iter().map(|rank| {
+            serde_json::json!({
+                "title": rank.title, "subtitle": rank.subtitle, "plays": rank.plays, "listened_ms": rank.listened_ms
+            })
+        }).collect::<Vec<_>>();
+        let json = serde_json::json!({
+            "from_unix": stats.from, "until_unix": stats.until,
+            "listened_ms": stats.listened_ms, "plays": stats.plays,
+            "songs": ranks(&stats.songs), "artists": ranks(&stats.artists),
+            "albums": ranks(&stats.albums), "genres": ranks(&stats.genres)
+        });
+        match serde_json::to_string_pretty(&json) {
+            Ok(export) if crate::android::export_listening_stats(&export) => {}
+            _ => self.notice("Não foi possível exportar as estatísticas.", true),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_create_playlist(&mut self, name: &str) {
+        self.create_playlist(name, "");
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_rename_playlist(&mut self, name: &str) {
+        let name = name.trim();
+        if !name.is_empty() {
+            self.edit_playlist(crate::worker::PlaylistEdit::Rename(name.to_owned()));
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_delete_playlist(&mut self) {
+        self.edit_playlist(crate::worker::PlaylistEdit::Delete);
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_edit_playlist_row(&mut self, action: &str, index: i32, track: &str) {
+        let Ok(index) = usize::try_from(index) else { return };
+        let track = track.to_owned();
+        let edit = match action {
+            "remove" => crate::worker::PlaylistEdit::Remove { index, track },
+            "move" => crate::worker::PlaylistEdit::MoveUp { index, track },
+            _ => return,
+        };
+        self.edit_playlist(edit);
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_add_now_to_playlist(&mut self, playlist: &str) {
+        if let Some(now) = self.pb.now.as_ref() {
+            self.add_to_playlist(&now.id.clone(), playlist);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_queue_track(&mut self, id: &str, next: bool) {
+        self.queue_track(id, if next { QueueMode::PlayNext } else { QueueMode::Enqueue });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_lyrics(&mut self) {
+        let Some(id) = self.pb.now.as_ref().and_then(|track| ytm_vm::strip_remote(&track.id)) else { return };
+        if self.remote_enabled {
+            self.view.set_remote_lyrics("", "", true);
+            self.jobs.submit(Job::Remote(crate::remote::RemoteJob::Lyrics { seq: self.art_seq, id: id.to_owned() }));
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_watch_now(&mut self) {
+        let Some(id) = self.pb.now.as_ref().and_then(|track| ytm_vm::strip_remote(&track.id)) else { return };
+        if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            return;
+        }
+        if crate::android::open_video(id) {
+            self.engine.pause();
+        } else {
+            self.notice("Não foi possível abrir o reprodutor de vídeo.", true);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_share_now(&mut self) {
+        let Some(now) = self.pb.now.as_ref() else { return };
+        let mut text = format!("{} — {}", now.title, now.artist);
+        if let Some(id) = ytm_vm::strip_remote(&now.id).filter(|id| {
+            !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        }) {
+            text.push_str(&format!("\nhttps://music.youtube.com/watch?v={id}"));
+        }
+        if !crate::android::share_text(&text) {
+            self.notice("Não foi possível abrir o compartilhamento.", true);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_home_feed(&mut self, feed: i32) {
+        let section = match feed {
+            1 => HomeSectionVm::Mixes,
+            2 => HomeSectionVm::Discover,
+            _ => HomeSectionVm::ForYou,
+        };
+        if self.remote_enabled {
+            self.request_home(section);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_open_item(&mut self, kind: &str, id: &str) {
+        if kind == "favorite-mix" {
+            self.request_detail(DetailRef::FavoriteMix);
+        } else if kind == "smart-recent" {
+            self.request_detail(DetailRef::SmartRecent);
+        } else if kind == "smart-unplayed" {
+            self.request_detail(DetailRef::SmartUnplayed);
+        } else if kind == "genre" {
+            self.open_genre(id);
+        } else if matches!(kind, "history" | "songs" | "downloads" | "albums") {
+            self.open_collection(kind);
+        } else if matches!(kind, "album" | "playlist" | "artist" | "mood" | "liked") {
+            self.open_item(kind, id);
+        } else {
+            self.android_play_track(id);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_play_detail(&mut self) {
+        if self.android_has_focus() {
+            self.play_all(false);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_navigation(&mut self, tab: i32) {
+        let tab = match tab {
+            0 => NavTab::Home,
+            1 => NavTab::Explore,
+            2 => NavTab::Library,
+            3 => NavTab::Search,
+            _ => NavTab::Settings,
+        };
+        if tab != self.tab {
+            self.navigate(tab);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_storage_usage(&mut self) {
+        let (Some(files), Some(cache)) = (self.data_dir.clone(), self.cache_dir.clone()) else { return };
+        let sink = self.sink.clone();
+        let _ = std::thread::Builder::new().name("kazzu-storage".into()).spawn(move || {
+            fn bytes(path: &std::path::Path) -> u64 {
+                let mut stack = vec![path.to_owned()];
+                let mut bytes = 0u64;
+                while let Some(dir) = stack.pop() {
+                    let Ok(files) = std::fs::read_dir(dir) else { continue };
+                    for file in files.flatten() {
+                        let Ok(kind) = file.file_type() else { continue };
+                        if kind.is_dir() {
+                            stack.push(file.path());
+                        } else if kind.is_file() && let Ok(metadata) = file.metadata() {
+                            bytes = bytes.saturating_add(metadata.len());
+                        }
+                    }
+                }
+                bytes
+            }
+            sink(Msg::StorageUsage { files: bytes(&files), cache: bytes(&cache) });
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_remove_cached(&mut self, id: &str) {
+        let (Some(track), Some(cache)) = (self.remote_tracks.peek(&id.to_owned()).cloned(), self.engine.cache().cloned()) else { return };
+        let sink = self.sink.clone();
+        let _ = std::thread::Builder::new().name("kazzu-cache-evict".into()).spawn(move || {
+            sink(Msg::StreamRemoved(cache.remove_track(&track)));
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_clear_cache(&mut self) {
+        let Some(cache) = self.engine.cache().cloned() else {
+            self.notice("Cache de áudio indisponível.", true);
+            return;
+        };
+        let sink = self.sink.clone();
+        if std::thread::Builder::new().name("kazzu-cache".into()).spawn(move || {
+            sink(Msg::StreamCacheCleared(cache.clear_and_count()));
+        }).is_err() {
+            self.notice("Não foi possível iniciar a limpeza do cache.", true);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_glass(&mut self, index: i32, value: f32) {
+        let Ok(index) = usize::try_from(index) else { return };
+        let Some(slot) = self.cfg.mobile_appearance.glass.get_mut(index) else { return };
+        *slot = value;
+        self.cfg.mobile_appearance.sanitize();
+        self.view.set_mobile_appearance(&self.cfg.mobile_appearance);
+        // The scrubber emits while moving. Flush this with the normal position
+        // updates, background transition or shutdown instead of writing each step.
+        self.cfg_dirty = true;
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_setting(&mut self, key: &str, value: i32) {
+        match key {
+            "rounded" | "effects" | "vinyl" => {
+                let appearance = &mut self.cfg.mobile_appearance;
+                match key {
+                    "rounded" => appearance.rounded = value != 0,
+                    "effects" => appearance.effects = value,
+                    _ => appearance.vinyl = value,
+                }
+                appearance.sanitize();
+                self.view.set_mobile_appearance(&self.cfg.mobile_appearance);
+                self.save_config();
+            }
+            "crossfade" => {
+                let seconds = value.clamp(0, 8);
+                self.cfg.mobile_appearance.crossfade_seconds = seconds;
+                self.engine.set_crossfade(Duration::from_secs(seconds as u64));
+                self.view.set_mobile_appearance(&self.cfg.mobile_appearance);
+                self.save_config();
+            }
+            "dark" => self.set_theme(if value != 0 { ThemePref::Dark } else { ThemePref::Light }),
+            "motion" => self.set_reduce_motion(value == 0),
+            "transparency" => self.set_reduce_transparency(value != 0),
+            "cover" => self.set_accent_pref(if value != 0 { AccentPref::Cover } else { AccentPref::Brand }),
+            "autoplay" => self.set_autoplay_radio(value != 0),
+            "quality" => self.set_stream_quality(StreamQualityPref::from_index(value)),
+            "playlistCover" => self.android_choose_playlist_cover(),
+            "storageUsage" => self.android_storage_usage(),
+            "createBackup" => self.android_create_backup(false),
+            "shareBackup" => self.android_create_backup(true),
+            "restoreBackup" => {
+                if !crate::android::select_backup() {
+                    self.notice("Seletor de arquivos indisponível.", true);
+                }
+            }
+            "clearCache" => self.android_clear_cache(),
+            "folder" => self.add_folder(),
+            "importM3u" => {
+                if !crate::android::select_m3u() {
+                    self.notice("Seletor de arquivos indisponível.", true);
+                }
+            }
+            "findDuplicates" => crate::android::find_duplicates(),
+            "scanLibrary" => {
+                crate::android::refresh_music_folders();
+                self.rescan();
+            }
+            "clearSearchHistory" => self.clear_recent_searches(),
+            _ => self.notice("Opção indisponível.", false),
+        }
+    }
+
     pub fn set_color_palette(&mut self, palette: i32) {
         self.cfg.color_palette = palette.clamp(0, 5);
         self.save_config();
@@ -1373,6 +2130,9 @@ impl<V: View> Controller<V> {
     }
 
     pub fn set_stream_quality(&mut self, q: StreamQualityPref) {
+        if let Some(quality) = &self.engine_quality {
+            quality.store(q.index(), Ordering::Relaxed);
+        }
         self.cfg.stream_quality = q;
         self.push_prefs();
         self.save_config();
@@ -1404,6 +2164,8 @@ impl<V: View> Controller<V> {
             autoplay_radio: self.cfg.autoplay_radio,
         };
         self.view.set_prefs(&prefs);
+        #[cfg(target_os = "android")]
+        self.view.set_mobile_appearance(&self.cfg.mobile_appearance);
     }
 
     fn push_accent(&self) {
@@ -1457,13 +2219,21 @@ impl<V: View> Controller<V> {
 
     /// Fim do app: grava a configuração e para o motor. Seguro chamar mais de uma vez.
     pub fn shutdown(&mut self) {
-        // no encerramento a gravação é síncrona: o worker pode já não existir (única escrita fora do worker)
+        // On Android the library worker drains submissions before closing its
+        // channel, so writes stay ordered across UI teardown and backgrounding.
+        #[cfg(target_os = "android")]
+        if self.cfg_dirty {
+            self.save_config();
+        }
+
+        #[cfg(not(target_os = "android"))]
         if let Some(path) = &self.cfg_path
             && let Err(e) = self.cfg.save(path)
         {
             log::warn!("{e}");
         }
         self.cfg_dirty = false;
+        self.record_listen_if_needed();
         self.engine.stop();
     }
 

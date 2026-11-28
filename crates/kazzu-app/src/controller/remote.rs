@@ -91,6 +91,19 @@ pub(super) struct Context {
     pub played: HashSet<String>,
 }
 
+/// Radio bookkeeping. Its pending request holds no ordered track entries.
+pub(super) struct EngineRadio {
+    seq: u64,
+    first: QueueItemId,
+    seed: String,
+    continuation: Option<Box<Radio>>,
+    fetching: bool,
+    exhausted: bool,
+    empty_rounds: u8,
+    stopped: bool,
+    retry_after: Option<Instant>,
+}
+
 /// Embaralhamento simples (xorshift semeado pelo relógio): suficiente para ordem de fila, sem dependência nova.
 fn shuffle<T>(v: &mut [T]) {
     let mut x = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64) | 1;
@@ -497,6 +510,7 @@ impl<V: View> Controller<V> {
             Some(what) => {
                 // invalida qualquer pedido de tocar anterior ainda em voo
                 self.ctx_seq += 1;
+                self.engine_radio = None;
                 self.toast("Procurando as músicas…", false);
                 self.jobs.submit(Job::Remote(RemoteJob::PlayItem { ctx_seq: self.ctx_seq, what, shuffle: false }));
             }
@@ -640,6 +654,17 @@ impl<V: View> Controller<V> {
     // Tocar: contextos
     // ----------------------------------------------------------------------------------------
 
+    fn submit_local_play(&mut self, scope: Scope, start_id: Option<String>, shuffle: bool, label: String) {
+        if self.engine_quality.is_some() || cfg!(target_os = "android") {
+            self.ctx_seq += 1;
+            self.ctx = None;
+            self.engine_radio = None;
+            self.jobs.submit(Job::PlayScoped { seq: self.ctx_seq, scope, start_id, shuffle, label });
+        } else {
+            self.jobs.submit(Job::Play { scope, start_id, shuffle, label });
+        }
+    }
+
     /// Id da faixa → lista de origem → fila. Listas só locais seguem para o motor inteiras; qualquer lista com
     /// faixa remota vira um contexto sob demanda.
     pub(super) fn play_context(&mut self, id: &str) {
@@ -651,15 +676,15 @@ impl<V: View> Controller<V> {
         }
         // ids especiais dos cartões locais
         if let Some(album) = id.strip_prefix("album:") {
-            self.jobs.submit(Job::Play { scope: Scope::Album(album.to_owned()), start_id: None, shuffle: false, label: String::new() });
+            self.submit_local_play(Scope::Album(album.to_owned()), None, false, String::new());
             return;
         }
         if id == "liked" {
-            self.jobs.submit(Job::Play { scope: Scope::Liked, start_id: None, shuffle: false, label: "Curtidos".into() });
+            self.submit_local_play(Scope::Liked, None, false, "Curtidos".into());
             return;
         }
         if id == "shuffle-all" {
-            self.jobs.submit(Job::Play { scope: Scope::All, start_id: None, shuffle: true, label: "Biblioteca".into() });
+            self.submit_local_play(Scope::All, None, true, "Biblioteca".into());
             return;
         }
         // de onde veio o clique
@@ -687,7 +712,7 @@ impl<V: View> Controller<V> {
         let any_remote = list.iter().any(|i| ytm_vm::is_remote_id(i));
         if !any_remote {
             let start = Some(id.to_owned());
-            self.jobs.submit(Job::Play { scope: Scope::Ids(if whole { list } else { vec![id.to_owned()] }), start_id: start, shuffle: false, label });
+            self.submit_local_play(Scope::Ids(if whole { list } else { vec![id.to_owned()] }), start, false, label);
             return;
         }
         let list = if whole { list } else { vec![id.to_owned()] };
@@ -731,12 +756,21 @@ impl<V: View> Controller<V> {
                 self.start_context(entries, 0, &title, shuffle);
             }
         } else {
-            self.jobs.submit(Job::Play { scope: Scope::Ids(ids), start_id: None, shuffle, label: self.detail_title.clone() });
+            self.submit_local_play(Scope::Ids(ids), None, shuffle, self.detail_title.clone());
         }
     }
 
     pub(super) fn start_context(&mut self, mut entries: Vec<Entry>, start: usize, label: &str, shuffle_all: bool) {
         if entries.is_empty() {
+            return;
+        }
+        if self.engine_quality.is_some() {
+            self.ctx = None;
+            self.engine_radio = None;
+            self.ctx_seq += 1;
+            self.jobs.submit(Job::PrepareQueue {
+                seq: self.ctx_seq, entries, start, shuffle: shuffle_all, label: label.to_owned(),
+            });
             return;
         }
         let start = start.min(entries.len() - 1);
@@ -790,6 +824,81 @@ impl<V: View> Controller<V> {
         self.publish_queue();
     }
 
+    pub(super) fn install_engine_radio(&mut self, seq: u64, items: &[QueueItem], start: usize) {
+        let Some(first) = items.get(start).map(|item| item.id) else { return };
+        self.engine_radio = items.iter().rev().find(|item| matches!(&item.track.source, TrackSource::Remote { .. }))
+            .map(|item| EngineRadio {
+                seq, first, seed: item.track.id.to_string(), continuation: None,
+                fetching: false, exhausted: false, empty_rounds: 0, stopped: false, retry_after: None,
+            });
+    }
+
+    pub(super) fn cancel_radio_resume(&mut self) {
+        if let Some(state) = &mut self.engine_radio {
+            state.stopped = false;
+        }
+        if let Some(state) = &mut self.ctx {
+            state.resume = false;
+        }
+    }
+
+    pub(super) fn retry_engine_radio(&mut self, seq: u64) {
+        if self.engine_radio.as_ref().is_some_and(|state| state.seq == seq && state.stopped) {
+            self.request_engine_radio();
+        }
+    }
+
+    fn request_engine_radio(&mut self) {
+        if !self.cfg.autoplay_radio || self.pb.repeat != RepeatVm::Off || self.upcoming().len() > LOOKAHEAD {
+            return;
+        }
+        let Some(radio) = self.engine_radio.as_mut() else { return };
+        // QueueChanged may still refer to the previous load.
+        if !self.queue_items.iter().any(|item| item.id == radio.first)
+            || radio.fetching || radio.exhausted
+            || radio.retry_after.is_some_and(|until| Instant::now() < until)
+        {
+            return;
+        }
+        radio.fetching = true;
+        self.jobs.submit(Job::Remote(RemoteJob::Radio {
+            ctx_seq: radio.seq, seed: radio.seed.clone(), prior: radio.continuation.clone(),
+        }));
+    }
+
+    fn append_engine_radio(&mut self, seq: u64, tracks: Vec<CoreTrack>, radio: Radio) -> bool {
+        let Some(state) = self.engine_radio.as_mut().filter(|state| state.seq == seq) else { return false };
+        state.fetching = false;
+        if !self.cfg.autoplay_radio {
+            return true;
+        }
+        let mut known: HashSet<String> = self.queue_items.iter().filter_map(|item| {
+            matches!(&item.track.source, TrackSource::Remote { .. }).then(|| item.track.id.to_string())
+        }).collect();
+        let items: Vec<_> = tracks.into_iter().filter(|track| known.insert(track.id.to_string()))
+            .take(RADIO_BATCH).map(|track| QueueItem::new(track, kazzu_core::StreamSource::Deferred)).collect();
+        let has_more = radio.continuation.is_some();
+        state.continuation = Some(Box::new(radio));
+        if items.is_empty() {
+            state.empty_rounds += 1;
+            state.exhausted = !has_more || state.empty_rounds >= 3;
+            self.request_engine_radio();
+        } else {
+            state.empty_rounds = 0;
+            state.exhausted = !has_more;
+            let first = items[0].id;
+            let resume = std::mem::take(&mut state.stopped);
+            for item in &items {
+                self.remember_remote(&item.track);
+            }
+            self.engine.enqueue(items);
+            if resume {
+                self.engine.jump_to(first);
+            }
+        }
+        true
+    }
+
     fn submit_resolve(&self, entry: &Entry, for_start: bool) {
         let ctx_seq = self.ctx_seq;
         match entry {
@@ -811,6 +920,10 @@ impl<V: View> Controller<V> {
 
     /// Sai do estado parado e tenta a próxima. Sem `force`, só depois do recuo.
     pub(super) fn unstall(&mut self, force: bool) {
+        if self.engine_radio.is_some() {
+            self.request_engine_radio();
+            return;
+        }
         let due = match self.ctx.as_ref() {
             Some(c) if c.stalled => force || c.retry_after.is_none_or(|t| Instant::now() >= t),
             _ => false,
@@ -839,6 +952,11 @@ impl<V: View> Controller<V> {
     /// O motor chegou ao fim da fila. Numa fila sob demanda isso pode ser só "a próxima ainda não chegou" (rede lenta,
     /// Próxima várias vezes): fica marcado para retomar assim que a faixa for entregue.
     pub(super) fn on_queue_finished(&mut self) {
+        if let Some(radio) = self.engine_radio.as_mut() {
+            radio.stopped = self.cfg.autoplay_radio;
+            self.request_engine_radio();
+            return;
+        }
         let autoplay = self.cfg.autoplay_radio && self.remote_enabled;
         let Some(c) = self.ctx.as_mut() else { return };
         let more = c.resolving || c.start_pending || !c.tail.is_empty() || c.radio_fetching || c.repeat_all || (autoplay && !c.radio_exhausted && c.radio_seed.is_some());
@@ -954,6 +1072,10 @@ impl<V: View> Controller<V> {
 
     /// Mantém `LOOKAHEAD` faixas resolvidas à frente da atual; acabando a lista, pede o rádio.
     pub(super) fn ensure_lookahead(&mut self) {
+        if self.engine_radio.is_some() {
+            self.request_engine_radio();
+            return;
+        }
         enum Next {
             Nothing,
             Resolve(Entry),
@@ -992,6 +1114,10 @@ impl<V: View> Controller<V> {
     }
 
     fn on_radio(&mut self, ctx_seq: u64, tracks: Vec<CoreTrack>, radio: Radio) {
+        if self.engine_radio.as_ref().is_some_and(|state| state.seq == ctx_seq) {
+            self.append_engine_radio(ctx_seq, tracks, radio);
+            return;
+        }
         if self.ctx.as_ref().map(|c| c.seq) != Some(ctx_seq) {
             return;
         }
@@ -1024,6 +1150,20 @@ impl<V: View> Controller<V> {
 
     /// O rádio falhou: erro de rede NÃO esgota o rádio (recua e tenta de novo); só o que não tem conserto esgota.
     pub(super) fn on_radio_failed(&mut self, ctx_seq: u64, kind: ErrorKind) {
+        if let Some(state) = self.engine_radio.as_mut().filter(|state| state.seq == ctx_seq) {
+            state.fetching = false;
+            state.exhausted = !kind.is_retryable();
+            let delay = Duration::from_secs(30);
+            state.retry_after = Some(Instant::now() + delay);
+            if !state.exhausted && state.stopped {
+                let sink = self.sink.clone();
+                let _ = std::thread::Builder::new().name("kazzu-radio-retry".into()).spawn(move || {
+                    std::thread::sleep(delay);
+                    sink(Msg::RetryEngineRadio(ctx_seq));
+                });
+            }
+            return;
+        }
         if self.ctx.as_ref().map(|c| c.seq) != Some(ctx_seq) {
             return;
         }
@@ -1089,6 +1229,20 @@ impl<V: View> Controller<V> {
         self.ctx.as_ref().and_then(|c| c.tail.iter().position(|e| e.id() == id)).map(RowPos::Tail)
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) fn android_queue_action(&mut self, action: &str, id: &str) {
+        let Ok(id) = id.parse::<u64>() else { return };
+        let id = QueueItemId(id);
+        let upcoming = self.upcoming();
+        let Some(index) = upcoming.iter().position(|item| item.id == id) else { return };
+        match action {
+            "jump" if self.android_has_focus() => self.engine.jump_to(id),
+            "remove" => self.engine.remove(id),
+            "move" if index > 0 => self.engine.move_before(id, upcoming[index - 1].id),
+            _ => {}
+        }
+    }
+
     pub fn queue_remove(&mut self, id: &str) {
         match self.locate_row(id) {
             Some(RowPos::Engine(i)) => {
@@ -1122,13 +1276,8 @@ impl<V: View> Controller<V> {
     pub fn queue_move_up(&mut self, id: &str) {
         match self.locate_row(id) {
             Some(RowPos::Engine(i)) if i > 0 => {
-                // o motor não tem "mover": tira dessa posição em diante e devolve na nova ordem
-                let mut moved: Vec<QueueItem> = self.upcoming()[i - 1..].to_vec();
-                moved.swap(0, 1);
-                for item in &moved {
-                    self.engine.remove(item.id);
-                }
-                self.engine.enqueue(moved);
+                let upcoming = self.upcoming();
+                self.engine.move_before(upcoming[i].id, upcoming[i - 1].id);
             }
             Some(RowPos::Tail(j)) if j > 0 => {
                 if let Some(c) = self.ctx.as_mut() {

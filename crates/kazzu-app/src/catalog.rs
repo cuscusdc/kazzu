@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use kazzu_core::{Album, ProviderKind, StreamQuality, StreamSource, Track, TrackId};
 use kazzu_ytm::{AlbumPage, ArtistPage, BrowseRef, Category, Config, Discover, Item, PlaylistPage, Radio, SearchFilter, Shelf, ShelfPage, Suggestions, YtMusic};
@@ -35,6 +36,23 @@ pub struct ExploreFeed {
     pub categories: Vec<Category>,
 }
 
+pub(crate) fn install_resolver(
+    engine: kazzu_audio::EngineBuilder,
+    catalog: Arc<dyn Catalog>,
+    quality: Arc<AtomicI32>,
+) -> kazzu_audio::EngineBuilder {
+    engine.resolve_streams(move |track| {
+        let quality = crate::config::StreamQualityPref::from_index(quality.load(Ordering::Relaxed));
+        catalog.resolve(track, quality.to_core()).map(|resolved| resolved.source).map_err(|error| {
+            if error.is_retryable() || crate::ytm_vm::is_offline(error.kind()) {
+                kazzu_core::Error::Network(error.to_string())
+            } else {
+                kazzu_core::Error::other(error.to_string())
+            }
+        })
+    })
+}
+
 pub trait Catalog: Send + Sync {
     fn kind(&self) -> ProviderKind;
 
@@ -49,6 +67,7 @@ pub trait Catalog: Send + Sync {
     fn artist(&self, id: &str) -> CatResult<ArtistPage>;
     fn playlist(&self, id: &str) -> CatResult<PlaylistPage>;
     fn radio(&self, video_id: &str) -> CatResult<Radio>;
+    fn lyrics(&self, _video_id: &str) -> CatResult<Option<kazzu_ytm::Lyrics>> { Ok(None) }
     fn radio_continuation(&self, radio: &Radio) -> CatResult<Radio>;
 
     /// Abre a faixa para o motor (pode demorar: rede). Nunca chamar na thread de UI.
@@ -108,9 +127,20 @@ impl YtmCatalog {
     pub fn open(data_dir: &Path) -> CatResult<Self> {
         Ok(Self { yt: YtMusic::new(Config::with_data_dir(data_dir))? })
     }
+
+    /// Keep the provider's persistent library separate from disposable metadata.
+    pub fn open_with_cache(data_dir: &Path, cache_dir: &Path) -> CatResult<Self> {
+        let mut config = Config::with_data_dir(data_dir);
+        config.cache_dir = Some(cache_dir.join("ytm"));
+        Ok(Self { yt: YtMusic::new(config)? })
+    }
 }
 
 impl Catalog for YtmCatalog {
+    fn lyrics(&self, video_id: &str) -> CatResult<Option<kazzu_ytm::Lyrics>> {
+        self.yt.client().lyrics(video_id)
+    }
+
     fn kind(&self) -> ProviderKind {
         ProviderKind::YtMusic
     }

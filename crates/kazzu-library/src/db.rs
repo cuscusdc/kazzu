@@ -137,6 +137,31 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE playlist_items_v2 RENAME TO playlist_items;
     CREATE INDEX idx_playlist_items ON playlist_items(playlist_id, position);
     "#,
+    // v3 — Histórico remoto no mesmo SQLite. Guarda somente metadados e tempo de escuta.
+    r#"
+    CREATE TABLE remote_play_history (
+        id          INTEGER PRIMARY KEY,
+        provider    TEXT NOT NULL,
+        remote_id   TEXT NOT NULL,
+        track_json  TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        artist      TEXT NOT NULL,
+        album       TEXT NOT NULL,
+        played_at   INTEGER NOT NULL,
+        listened_ms INTEGER NOT NULL CHECK(listened_ms >= 0)
+    );
+    CREATE INDEX idx_remote_history_time ON remote_play_history(played_at);
+    CREATE INDEX idx_remote_history_track ON remote_play_history(provider, remote_id);
+    "#,
+
+    // v4 — A capa escolhida faz parte da playlist e não do cache.
+    r#"
+    CREATE TABLE playlist_covers (
+        playlist_id INTEGER PRIMARY KEY REFERENCES playlists(id) ON DELETE CASCADE,
+        image BLOB NOT NULL CHECK(length(image) <= 1048576)
+    );
+    "#,
+
 ];
 
 pub(crate) const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;

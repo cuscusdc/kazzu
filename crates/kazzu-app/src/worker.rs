@@ -30,7 +30,8 @@ pub const REMOTE_DEBOUNCE: Duration = Duration::from_millis(250);
 const SEARCH_LIMIT: usize = 50;
 const RECENTS: usize = 20;
 const HOME_ALBUMS: usize = 24;
-const THUMB_CACHE_MAX: usize = 400;
+const THUMB_CACHE_MAX: usize = if cfg!(target_os = "android") { 144 } else { 400 };
+const MOBILE_ALBUM_THUMBNAILS: usize = 48;
 
 /// O que tocar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,8 @@ pub enum Scope {
     Liked,
     Playlist(String),
     Genre(String),
+    SmartRecent,
+    SmartUnplayed,
     /// Biblioteca inteira.
     All,
     /// Lista exata de faixas (recentes, resultados de busca, detalhe aberto).
@@ -58,6 +61,9 @@ pub enum DetailRef {
     Albums,
     Playlist(String),
     Genre(String),
+    SmartRecent,
+    SmartUnplayed,
+    FavoriteMix,
     /// O álbum a que a faixa (id local) pertence.
     AlbumOfTrack(String),
 }
@@ -88,13 +94,35 @@ pub enum Job {
     ImportAccount { lists: Vec<crate::accounts::Import>, skipped: usize },
     Search { seq: u64, query: String },
     Play { scope: Scope, start_id: Option<String>, shuffle: bool, label: String },
+    PlayScoped { seq: u64, scope: Scope, start_id: Option<String>, shuffle: bool, label: String },
     QueueItems { id: String, mode: QueueMode },
+    /// Resolve local database IDs and leave remote transport deferred to the engine.
+    PrepareQueue { seq: u64, entries: Vec<crate::controller::Entry>, start: usize, shuffle: bool, label: String },
     OpenDetail { seq: u64, what: DetailRef },
     NowArt { seq: u64, cover: Option<PathBuf> },
+    #[cfg(target_os = "android")]
+    Lyrics { seq: u64, path: PathBuf },
+    #[cfg(target_os = "android")]
+    ListeningStats { seq: u64, from: i64, until: i64, export: bool },
+    #[cfg(target_os = "android")]
+    EditLocalTags { root: PathBuf, track_id: String, title: String, artist: String, album: String, genre: String },
+    #[cfg(target_os = "android")]
+    ImportM3u { title: String, contents: String },
+    #[cfg(target_os = "android")]
+    ExportBackup { root: PathBuf, config: Box<crate::config::Config>, lan: bool, room: bool },
+    #[cfg(target_os = "android")]
+    RestoreBackup { root: PathBuf, json: String },
+    #[cfg(target_os = "android")]
+    SyncPeerPlaylists { root: PathBuf, json: String },
+    #[cfg(target_os = "android")]
+    SetPlaylistCover { id: String, bytes: Vec<u8> },
+    #[cfg(target_os = "android")]
+    OpenCachedAudio { seq: u64, cache: Arc<kazzu_audio::StreamCache> },
     /// View-models (com miniaturas) de faixas já conhecidas, para a fila.
     TrackVms { seq: u64, ids: Vec<String> },
     SetLiked { id: String, liked: bool },
     RecordPlay { id: String, listened_ms: u64 },
+    RecordRemotePlay { track: Box<kazzu_core::Track>, listened_ms: u64 },
     /// Cria a playlist e, se `add` vier, já coloca a faixa nela (`id`, e a faixa completa se for remota).
     CreatePlaylist { name: String, add: Option<(String, Option<Box<kazzu_core::Track>>)> },
     /// Põe uma faixa (local, ou remota por referência) numa playlist.
@@ -132,8 +160,25 @@ pub enum JobResult {
     Search { seq: u64, songs: Vec<TrackVm>, albums: Vec<AlbumVm>, ids: Vec<String> },
     Queue { items: Vec<QueueItem>, start: usize, shuffle: bool, label: String },
     QueueItems { items: Vec<QueueItem>, mode: QueueMode },
+    PreparedQueue { seq: u64, items: Vec<QueueItem>, start: usize, shuffle: bool, label: String },
     Detail { seq: u64, detail: Box<DetailVm>, ids: Vec<String>, remote_tracks: Vec<kazzu_core::Track> },
     NowArt { seq: u64, art: Box<NowArtVm> },
+    #[cfg(target_os = "android")]
+    Lyrics { seq: u64, lines: Vec<(i32, String)> },
+    #[cfg(target_os = "android")]
+    ListeningStats { seq: u64, stats: Box<kazzu_library::ListeningStats>, export: bool },
+    #[cfg(target_os = "android")]
+    LocalTagsEdited(Result<(), String>),
+    #[cfg(target_os = "android")]
+    M3uImported { count: usize, skipped: usize },
+    #[cfg(target_os = "android")]
+    BackupReady { result: Result<String, String>, lan: bool, room: bool },
+    #[cfg(target_os = "android")]
+    BackupRestored(Result<Box<crate::backup::Restored>, String>),
+    #[cfg(target_os = "android")]
+    PeerSynced(Result<usize, String>),
+    #[cfg(target_os = "android")]
+    RemoteLyrics { seq: u64, result: Result<Option<kazzu_ytm::Lyrics>, crate::catalog::ErrorKind> },
     TrackVms { seq: u64, tracks: Vec<TrackVm> },
     /// Lista "Recentes" atualizada (depois de registrar uma escuta).
     Recents(Vec<TrackVm>),
@@ -265,6 +310,19 @@ impl Store {
         AlbumVm { id: a.id.0.to_string(), title: a.title.clone(), artist: a.artist.clone(), cover, cover_url: None }
     }
 
+    fn album_list(&mut self, albums: &[Album]) -> Vec<AlbumVm> {
+        albums.iter().enumerate().map(|(index, album)| {
+            if !cfg!(target_os = "android") || index < MOBILE_ALBUM_THUMBNAILS {
+                self.album_vm(album)
+            } else {
+                AlbumVm {
+                    id: album.id.0.to_string(), title: album.title.clone(),
+                    artist: album.artist.clone(), ..Default::default()
+                }
+            }
+        }).collect()
+    }
+
     /// Nome para "Tocando de …" quando quem pediu não deu um.
     fn scope_label(&self, scope: &Scope) -> String {
         match scope {
@@ -274,6 +332,8 @@ impl Store {
                 .map_or_else(|| "Playlist".to_owned(), |p| p.name),
             Scope::Liked => "Curtidos".to_owned(),
             Scope::Genre(g) => g.clone(),
+            Scope::SmartRecent => "Adicionadas recentemente".to_owned(),
+            Scope::SmartUnplayed => "Ainda não ouvidas".to_owned(),
             Scope::All | Scope::Ids(_) => "Biblioteca".to_owned(),
         }
     }
@@ -284,8 +344,12 @@ impl Store {
             Scope::Album(id) => parse_id(id).map(|i| self.lib.album_tracks(AlbumId(i))).transpose()?.unwrap_or_default(),
             Scope::Liked => self.lib.liked()?,
             Scope::Playlist(id) => parse_id(id).map(|i| self.lib.playlist_tracks(PlaylistId(i))).transpose()?.unwrap_or_default(),
-            Scope::Genre(g) => self.lib.tracks()?.into_iter().filter(|t| t.genre.as_deref() == Some(g.as_str())).collect(),
+            Scope::Genre(g) => self.lib.tracks()?.into_iter().filter(|t| {
+                t.genre.as_deref().is_some_and(|genre| genre.trim().eq_ignore_ascii_case(g.trim()))
+            }).collect(),
             Scope::All => self.lib.tracks()?,
+            Scope::SmartRecent => self.lib.recently_added(100)?,
+            Scope::SmartUnplayed => self.lib.never_played(100)?,
             Scope::Ids(ids) => {
                 let mut out = Vec::with_capacity(ids.len());
                 for id in ids {
@@ -300,6 +364,15 @@ impl Store {
 
     fn queue_item(&self, t: &Track) -> Option<QueueItem> {
         QueueItem::local(t.to_core(self.artwork(t.album_id)))
+    }
+
+    fn prepare_play(&mut self, scope: Scope, start_id: Option<String>, label: String) -> Result<(Vec<QueueItem>, usize, String), kazzu_library::Error> {
+        self.reload_caches_if_empty()?;
+        let label = if label.is_empty() { self.scope_label(&scope) } else { label };
+        let tracks = self.tracks_for(&scope)?;
+        let playable: Vec<_> = tracks.iter().filter_map(|track| self.queue_item(track).map(|item| (track, item))).collect();
+        let start = start_id.and_then(|id| playable.iter().position(|(track, _)| track.id.0.to_string() == id)).unwrap_or(0);
+        Ok((playable.into_iter().map(|(_, item)| item).collect(), start, label))
     }
 
     /// Executa um job. `emit` entrega resultados (pode ser chamado mais de uma vez, ex.: progresso do scan).
@@ -350,18 +423,40 @@ impl Store {
                 emit(JobResult::Search { seq, songs, albums, ids });
             }
             Job::Play { scope, start_id, shuffle, label } => {
-                self.reload_caches_if_empty()?;
-                let label = if label.is_empty() { self.scope_label(&scope) } else { label };
-                let tracks = self.tracks_for(&scope)?;
-                // faixas que não viram item (ex.: remotas sem stream) saem da lista; o início é recalculado sobre ela
-                let playable: Vec<(&Track, QueueItem)> = tracks.iter().filter_map(|t| self.queue_item(t).map(|i| (t, i))).collect();
-                if playable.is_empty() {
+                let (items, start, label) = self.prepare_play(scope, start_id, label)?;
+                if items.is_empty() {
                     emit(JobResult::Failed("Não há músicas para tocar aqui.".into()));
                 } else {
-                    let start = start_id.and_then(|id| playable.iter().position(|(t, _)| t.id.0.to_string() == id)).unwrap_or(0);
-                    let items: Vec<QueueItem> = playable.into_iter().map(|(_, i)| i).collect();
                     emit(JobResult::Queue { items, start, shuffle, label });
                 }
+            }
+            Job::PlayScoped { seq, scope, start_id, shuffle, label } => {
+                let (items, start, label) = self.prepare_play(scope, start_id, label)?;
+                emit(JobResult::PreparedQueue { seq, items, start, shuffle, label });
+            }
+            Job::PrepareQueue { seq, entries, start, shuffle, label } => {
+                self.reload_caches_if_empty()?;
+                let mut items = Vec::with_capacity(entries.len());
+                let mut playable_start = None;
+                for (index, entry) in entries.into_iter().enumerate() {
+                    let item = match entry {
+                        crate::controller::Entry::Local(id) => match parse_id(&id) {
+                            Some(id) => self.lib.track(TrackId(id))?.as_ref().and_then(|t| self.queue_item(t)),
+                            None => None,
+                        },
+                        crate::controller::Entry::Remote(track) => {
+                            Some(QueueItem::new(*track, kazzu_core::StreamSource::Deferred))
+                        }
+                    };
+                    if let Some(item) = item {
+                        if index >= start && playable_start.is_none() {
+                            playable_start = Some(items.len());
+                        }
+                        items.push(item);
+                    }
+                }
+                let start = playable_start.unwrap_or_else(|| items.len().saturating_sub(1));
+                emit(JobResult::PreparedQueue { seq, items, start, shuffle, label });
             }
             Job::QueueItems { id, mode } => {
                 self.reload_caches_if_empty()?;
@@ -376,6 +471,76 @@ impl Store {
                     Ok((detail, ids, remote_tracks)) => emit(JobResult::Detail { seq, detail: Box::new(detail), ids, remote_tracks }),
                     Err(error) => emit(JobResult::DetailFailed { seq, message: format!("Não foi possível abrir esta coleção. {error}") }),
                 }
+            }
+            #[cfg(target_os = "android")]
+            Job::Lyrics { seq, path } => emit(JobResult::Lyrics { seq, lines: crate::lyrics::read_lrc(&path) }),
+            #[cfg(target_os = "android")]
+            Job::ListeningStats { seq, from, until, export } => {
+                let stats = Box::new(self.lib.listening_stats(from, until)?);
+                emit(JobResult::ListeningStats { seq, stats, export });
+            }
+            #[cfg(target_os = "android")]
+            Job::EditLocalTags { root, track_id, title, artist, album, genre } => {
+                let result = (|| {
+                    let id = parse_id(&track_id).ok_or("Faixa local inválida.")?;
+                    let track = self.lib.track(TrackId(id)).map_err(|e| e.to_string())?.ok_or("Faixa não encontrada.")?;
+                    let path = track.path.canonicalize().map_err(|e| e.to_string())?;
+                    let root = root.canonicalize().map_err(|e| e.to_string())?;
+                    if !path.starts_with(&root) {
+                        return Err("A edição é permitida em cópias importadas para o Kazzu.".to_owned());
+                    }
+                    kazzu_library::update_tags(&path, &title, &artist, &album, &genre).map_err(|e| e.to_string())
+                })();
+                emit(JobResult::LocalTagsEdited(result));
+            }
+            #[cfg(target_os = "android")]
+            Job::ImportM3u { title, contents } => {
+                let (ids, skipped) = crate::m3u::resolve(&contents, self.lib.tracks()?);
+                if ids.is_empty() {
+                    emit(JobResult::Failed("Nenhuma faixa do M3U corresponde a uma música da biblioteca. Importe a pasta de áudio primeiro.".into()));
+                } else {
+                    let title = title.trim();
+                    let title = if title.is_empty() { "Playlist importada" } else { title };
+                    self.lib.import_local_playlist(title, &ids)?;
+                    emit(JobResult::M3uImported { count: ids.len(), skipped });
+                }
+            }
+            #[cfg(target_os = "android")]
+            Job::ExportBackup { root, config, lan, room } => {
+                emit(JobResult::BackupReady { result: crate::backup::export(&self.lib, &root, *config), lan, room });
+            }
+            #[cfg(target_os = "android")]
+            Job::RestoreBackup { root, json } => {
+                emit(JobResult::BackupRestored(crate::backup::restore(&mut self.lib, &root, &json).map(Box::new)));
+            }
+            #[cfg(target_os = "android")]
+            Job::SyncPeerPlaylists { root, json } => {
+                emit(JobResult::PeerSynced(crate::backup::sync_playlists(&mut self.lib, &root, &json)));
+            }
+            #[cfg(target_os = "android")]
+            Job::SetPlaylistCover { id, bytes } => {
+                match crate::playlist_cover::encode(&bytes) {
+                    Ok(image) => {
+                        let playlist = PlaylistId(parse_id(&id).ok_or(kazzu_library::Error::NotFound("playlist"))?);
+                        self.lib.set_playlist_cover(playlist, &image)?;
+                        emit(JobResult::PlaylistEdited { id, deleted: false });
+                    }
+                    Err(error) => emit(JobResult::Failed(error)),
+                }
+            }
+            #[cfg(target_os = "android")]
+            Job::OpenCachedAudio { seq, cache } => {
+                let complete = cache.complete_keys();
+                let mut seen = HashSet::new();
+                let entries = self.lib.known_remote_tracks()?.into_iter().chain(self.remote_liked())
+                    .filter(|track| kazzu_audio::StreamCache::key_for(track).is_some_and(|key| complete.contains(&key) && seen.insert(key)))
+                    .map(PlaylistEntry::Remote).collect::<Vec<_>>();
+                let (mut detail, ids, remote_tracks) = self.mixed_detail(
+                    "Áudio em cache".into(), "Nenhuma faixa com cópia completa no cache.", entries,
+                )?;
+                detail.cached_audio = true;
+                detail.subtitle = "Cópias temporárias para reprodução offline".into();
+                emit(JobResult::Detail { seq, detail: Box::new(detail), ids, remote_tracks });
             }
             Job::NowArt { seq, cover } => {
                 let art = match cover.as_deref().and_then(art::load) {
@@ -407,6 +572,10 @@ impl Store {
                     if liked { self.liked.insert(tid); } else { self.liked.remove(&tid); }
                     emit(JobResult::LikedSaved { id, liked });
                 }
+            }
+            Job::RecordRemotePlay { track, listened_ms } => {
+                self.lib.record_remote_play(&track, listened_ms)?;
+                emit(JobResult::ListeningSummary(self.listening_summary()?));
             }
             Job::RecordPlay { id, listened_ms } => {
                 if let Some(tid) = parse_id(&id) {
@@ -562,7 +731,7 @@ impl Store {
                 id: p.id.0.to_string(),
                 name: p.name.clone(),
                 count_label: format::songs_label(u64::from(p.track_count)),
-                covers: self.distinct_covers(&tracks, 4),
+                covers: if let Some(cover) = self.playlist_cover(p.id)? { vec![cover] } else { self.distinct_covers(&tracks, 4) },
             });
         }
 
@@ -590,7 +759,7 @@ impl Store {
 
         Ok(Snapshot {
             home: HomeVm { recents, albums, ..Default::default() },
-            library: LibraryVm { listening_summary: self.listening_summary()?, albums: all_albums.iter().map(|a| self.album_vm(a)).collect(), artists: self.lib.artists()?.into_iter().map(|a| ArtistVm { id: a.id.0.to_string(), name: a.name, subtitle: format::songs_label(a.track_count as u64), ..Default::default() }).collect(), collections, playlists: playlist_vms },
+            library: LibraryVm { #[cfg(target_os = "android")] genres: self.lib.genres()?, listening_summary: self.listening_summary()?, albums: self.album_list(&all_albums), artists: self.lib.artists()?.into_iter().map(|a| ArtistVm { id: a.id.0.to_string(), name: a.name, subtitle: format::songs_label(a.track_count as u64), ..Default::default() }).collect(), collections, playlists: playlist_vms },
             settings: SettingsVm {
                 folders: folders.iter().map(|p| p.display().to_string()).collect(),
                 summary: format::library_summary(folders.len(), track_count),
@@ -632,6 +801,13 @@ impl Store {
     }
 
     /// Detalhe + ids das faixas (para tocar na ordem exibida).
+    fn playlist_cover(&self, id: PlaylistId) -> Result<Option<Pixels>, kazzu_library::Error> {
+        Ok(self.lib.playlist_cover(id)?.and_then(|png| {
+            image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+                .ok().map(|image| art::to_pixels(&image.into_rgba8()))
+        }))
+    }
+
     fn detail(&mut self, r: &DetailRef) -> Result<(DetailVm, Vec<String>, Vec<kazzu_core::Track>), kazzu_library::Error> {
         if let DetailRef::ArtistOfTrack(track_id) = r {
             let name = parse_id(track_id).and_then(|id| self.lib.track(TrackId(id)).ok().flatten()).and_then(|t| t.artists.first().cloned());
@@ -648,7 +824,7 @@ impl Store {
             let albums = self.lib.artist_albums(artist_id)?;
             let mut out = self.mixed_detail(title, "Adicione músicas deste artista à biblioteca.", tracks.into_iter().map(PlaylistEntry::Local).collect())?;
             out.0.kind = DetailKindVm::Artist;
-            out.0.albums = albums.iter().map(|a| self.album_vm(a)).collect();
+            out.0.albums = self.album_list(&albums);
             return Ok(out);
         }
         if let DetailRef::AlbumOfTrack(track_id) = r {
@@ -660,9 +836,11 @@ impl Store {
         }
         let (title, subtitle, empty, scope) = match r {
             DetailRef::History => {
-                let tracks = self.lib.recent(200)?;
-                return self.mixed_detail("Ouvidas recentemente".into(), "O histórico aparece após ouvir músicas locais.", tracks.into_iter().map(PlaylistEntry::Local).collect());
+                let entries = self.lib.recent_mixed(200)?;
+                return self.mixed_detail("Ouvidas recentemente".into(), "O histórico aparece após ouvir músicas.", entries);
             }
+            DetailRef::SmartRecent => ("Adicionadas recentemente".into(), String::new(), "Nenhuma música indexada.".into(), Scope::SmartRecent),
+            DetailRef::SmartUnplayed => ("Ainda não ouvidas".into(), String::new(), "Nenhuma música sem reprodução registrada.".into(), Scope::SmartUnplayed),
             DetailRef::Songs => ("Músicas".into(), String::new(), "Adicione uma pasta para ouvir suas músicas aqui.".into(), Scope::All),
             DetailRef::AlbumOfTrack(_) | DetailRef::ArtistOfTrack(_) | DetailRef::Artist(_) => unreachable_detail(),
             DetailRef::Album(id) => {
@@ -674,6 +852,27 @@ impl Store {
                     }
                     None => ("Álbum".into(), String::new(), "Não encontramos este álbum. Ele pode ter sido removido da pasta.".into(), Scope::Album(id.clone())),
                 }
+            }
+            DetailRef::FavoriteMix => {
+                use std::collections::{BTreeMap, VecDeque};
+                let local = self.lib.liked()?.into_iter().map(PlaylistEntry::Local);
+                let remote = self.remote_liked().into_iter().map(PlaylistEntry::Remote);
+                let mut by_artist = BTreeMap::<String, VecDeque<PlaylistEntry>>::new();
+                for entry in local.chain(remote) {
+                    let artist = match &entry {
+                        PlaylistEntry::Local(track) => track.artists.first().cloned(),
+                        PlaylistEntry::Remote(track) => track.artists.first().map(|artist| artist.name.clone()),
+                    }.unwrap_or_default().to_lowercase();
+                    by_artist.entry(artist).or_default().push_back(entry);
+                }
+                let mut entries = Vec::new();
+                while !by_artist.is_empty() {
+                    by_artist.retain(|_, tracks| {
+                        if let Some(track) = tracks.pop_front() { entries.push(track); }
+                        !tracks.is_empty()
+                    });
+                }
+                return self.mixed_detail("Meu mix de curtidas".into(), "Curta faixas para montar seu mix.", entries);
             }
             DetailRef::Liked => {
                 // curtidas remotas (mais novas primeiro) e depois as locais
@@ -687,7 +886,7 @@ impl Store {
             DetailRef::Albums => {
                 let mut albums: Vec<Album> = self.albums.values().cloned().collect();
                 albums.sort_by_key(|a| a.title.to_lowercase());
-                let vms = albums.iter().map(|a| self.album_vm(a)).collect::<Vec<_>>();
+                let vms = self.album_list(&albums);
                 let sub = format::albums_label(vms.len() as u64);
                 return Ok((
                     DetailVm { kind: DetailKindVm::Albums, state: LoadStateVm::Ready, title: "Álbuns".into(), subtitle: sub, empty_text: "Adicione uma pasta de músicas para ver seus álbuns.".into(), albums: vms, ..Default::default() },
@@ -702,6 +901,9 @@ impl Store {
                     .unwrap_or_else(|| "Playlist".into());
                 let entries = self.lib.playlist_entries(PlaylistId(parse_id(id).ok_or(kazzu_library::Error::NotFound("playlist"))?))?;
                 let (mut detail, tracks, remote) = self.mixed_detail(name, "Esta playlist ainda está vazia.", entries)?;
+                if let Some(cover) = self.playlist_cover(PlaylistId(parse_id(id).unwrap_or(-1)))? {
+                    detail.cover = Some(cover);
+                }
                 detail.editable_playlist = id.clone();
                 return Ok((detail, tracks, remote));
             }
@@ -787,26 +989,37 @@ pub fn scan(lib: &mut Library, emit: Emit<'_>) -> Result<ScanReport, String> {
 
 /// Thread do `Store` + thread de scan dedicada + despachante dos jobs de rede.
 pub struct ThreadedRunner {
-    tx: Sender<Job>,
+    tx: Arc<Sender<Job>>,
     remote_tx: Sender<RemoteJob>,
+    remote_running: Arc<AtomicBool>,
 }
 
 impl ThreadedRunner {
     /// `emit` é chamado das threads de trabalho; deve só empurrar para a UI (ex.: `invoke_from_event_loop`).
     /// `remote`: rede dos provedores (capas, Início, busca, streams); `None` = só biblioteca local.
     pub fn spawn(data_dir: PathBuf, emit: Arc<dyn Fn(JobResult) + Send + Sync>, remote: Option<Arc<RemoteWorker>>) -> std::io::Result<Self> {
+        let cache_dir = data_dir.join("cache");
+        Self::spawn_with_cache(data_dir, cache_dir, emit, remote)
+    }
+
+    /// Keep disposable library artwork separate from persistent database files.
+    pub fn spawn_with_cache(data_dir: PathBuf, cache_dir: PathBuf, emit: Arc<dyn Fn(JobResult) + Send + Sync>, remote: Option<Arc<RemoteWorker>>) -> std::io::Result<Self> {
         let (tx, rx) = crossbeam_channel::unbounded::<Job>();
         let (remote_tx, remote_rx) = crossbeam_channel::unbounded::<RemoteJob>();
         let scanning = Arc::new(AtomicBool::new(false));
         // Scan pedido durante outro scan (pasta adicionada/removida no meio): roda de novo quando o atual termina.
         let rescan_pending = Arc::new(AtomicBool::new(false));
-        let own_tx = tx.clone();
+        let tx = Arc::new(tx);
+        let own_tx = Arc::downgrade(&tx);
         let providers = remote.as_ref().map(|r| r.providers().clone()).unwrap_or_default();
         let store_emit = emit.clone();
         std::thread::Builder::new().name("kazzu-library".into()).spawn(move || {
             let emit = store_emit;
-            let mut store = match Store::open(&data_dir) {
-                Ok(s) => s.with_providers(providers),
+            let opened = std::fs::create_dir_all(&data_dir)
+                .map_err(|e| e.to_string())
+                .and_then(|()| Library::open_with(data_dir.join("library.sqlite"), cache_dir.clone()).map_err(|e| e.to_string()));
+            let mut store = match opened {
+                Ok(lib) => Store::new(lib).with_providers(providers),
                 Err(e) => {
                     emit(JobResult::Failed(format!("Não foi possível abrir a biblioteca. {e}")));
                     return;
@@ -820,16 +1033,18 @@ impl ThreadedRunner {
                             rescan_pending.store(true, Ordering::SeqCst);
                             continue;
                         }
-                        let (scan_emit, dir, flag, pending, again) = (emit.clone(), data_dir.clone(), scanning.clone(), rescan_pending.clone(), own_tx.clone());
+                        let (scan_emit, dir, cache, flag, pending, again) = (emit.clone(), data_dir.clone(), cache_dir.clone(), scanning.clone(), rescan_pending.clone(), own_tx.clone());
                         let spawned = std::thread::Builder::new().name("kazzu-scan".into()).spawn(move || {
-                            let result = match Library::open(&dir) {
+                            let result = match Library::open_with(dir.join("library.sqlite"), cache) {
                                 Ok(mut lib) => scan(&mut lib, &*scan_emit),
                                 Err(e) => Err(e.to_string()),
                             };
                             flag.store(false, Ordering::SeqCst);
                             scan_emit(JobResult::ScanDone(result));
-                            if pending.swap(false, Ordering::SeqCst) {
-                                let _ = again.send(Job::Scan);
+                            if pending.swap(false, Ordering::SeqCst)
+                                && let Some(sender) = again.upgrade()
+                            {
+                                let _ = sender.send(Job::Scan);
                             }
                         });
                         if let Err(e) = spawned {
@@ -848,10 +1063,15 @@ impl ThreadedRunner {
         // de começar.
         let (pool_tx, pool_rx) = crossbeam_channel::unbounded::<RemoteJob>();
         let latest = Arc::new(LatestSeq::default());
+        let remote_running = Arc::new(AtomicBool::new(true));
         for n in 0..REMOTE_WORKERS {
             let (rx, worker, emit, latest) = (pool_rx.clone(), remote.clone(), emit.clone(), latest.clone());
+            let running = remote_running.clone();
             std::thread::Builder::new().name(format!("kazzu-remote-{n}")).spawn(move || {
                 while let Ok(job) = rx.recv() {
+                    if !running.load(Ordering::Acquire) {
+                        break;
+                    }
                     if latest.is_stale(&job) {
                         log::debug!("trabalho de rede descartado (já substituído)");
                         continue;
@@ -872,7 +1092,13 @@ impl ThreadedRunner {
                 }
             }
         })?;
-        Ok(Self { tx, remote_tx })
+        Ok(Self { tx, remote_tx, remote_running })
+    }
+}
+
+impl Drop for ThreadedRunner {
+    fn drop(&mut self) {
+        self.remote_running.store(false, Ordering::Release);
     }
 }
 

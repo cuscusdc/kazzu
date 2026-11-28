@@ -1,9 +1,9 @@
 # Prévia da nova UI do Kazzu
 
-No Linux, na raiz do repositório:
+No Linux, dentro desta pasta:
 
 ```sh
-./nova-ui-teste/preview.sh
+./preview.sh
 ```
 
 O script usa o Slint Viewer 1.19.1 pré-compilado com Skia. A primeira execução baixa e verifica o binário oficial. As seguintes usam o cache e recarregam a interface ao salvar os arquivos. Cargo e o SDK Android são dispensáveis para a prévia.
@@ -13,9 +13,9 @@ A janela usa o tamanho fixo de 390 × 780 pixels lógicos, em formato vertical. 
 Para verificar os arquivos ou capturar uma tela específica:
 
 ```sh
-./nova-ui-teste/preview.sh --check
+./preview.sh --check
 printf '{"preview":"player"}\n' > /tmp/kazzu-preview.json
-./nova-ui-teste/preview.sh --load-data /tmp/kazzu-preview.json --screenshot /tmp/kazzu-player.png
+./preview.sh --load-data /tmp/kazzu-preview.json --screenshot /tmp/kazzu-player.png
 ```
 
 A prévia é independente do APK. Os acabamentos são feitos com blur, sombras, camadas 2D e formas arredondadas. Refração e perspectiva CSS foram adaptadas com esses recursos nativos.

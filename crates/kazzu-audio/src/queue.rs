@@ -112,6 +112,25 @@ impl Queue {
         self.current = None;
     }
 
+    /// Move an item in playback order while preserving the current item.
+    pub fn move_before(&mut self, id: QueueItemId, before: QueueItemId) -> bool {
+        let (Some(from), Some(to)) = (self.order_position(id), self.order_position(before)) else {
+            return false;
+        };
+        if from == to || from + 1 == to {
+            return false;
+        }
+        let current = self.current_id();
+        let index = self.order.remove(from);
+        self.order.insert(if from < to { to - 1 } else { to }, index);
+        self.current = current.and_then(|id| self.order_position(id));
+        if !self.shuffle {
+            self.items = self.ordered_items();
+            self.order = (0..self.items.len()).collect();
+        }
+        true
+    }
+
     pub fn get(&self, id: QueueItemId) -> Option<&QueueItem> {
         self.items.iter().find(|i| i.id == id)
     }
