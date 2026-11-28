@@ -66,11 +66,11 @@ pub enum Msg {
     /// Eventos do streaming HTTP (URL vencida, rede caiu).
     Stream(StreamEvent),
     FolderPicked(Option<PathBuf>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     StreamCacheCleared(std::io::Result<u64>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     StreamRemoved(std::io::Result<bool>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     StorageUsage { files: u64, cache: u64 },
     AccountFetched(Result<(Vec<crate::accounts::Import>, usize), String>),
     System(SystemPrefs),
@@ -88,11 +88,11 @@ const VOLUME_STEP: f32 = 0.05;
 /// Quantas próximas faixas a fila da UI mostra (o resto vira "e mais N"): fila de milhares não reconstrói milhares de linhas.
 pub const QUEUE_VIEW_MAX: usize = 100;
 /// View-models de faixas da fila guardados (LRU).
-const VM_CACHE_MAX: usize = if cfg!(target_os = "android") { 240 } else { 600 };
+const VM_CACHE_MAX: usize = if cfg!(any(target_os = "android", target_os = "ios")) { 240 } else { 600 };
 /// Faixas remotas lembradas para poder tocá-las pelo id da linha.
 const REMOTE_TRACKS_MAX: usize = 4000;
 /// Capas remotas decodificadas guardadas em memória.
-const COVER_CACHE_MAX: usize = if cfg!(target_os = "android") { 160 } else { 500 };
+const COVER_CACHE_MAX: usize = if cfg!(any(target_os = "android", target_os = "ios")) { 160 } else { 500 };
 /// Depois disto, uma capa pedida e ainda ausente (falhou, ou saiu do cache) pode ser pedida de novo.
 pub(crate) const COVER_RETRY: Duration = Duration::from_secs(30);
 
@@ -130,13 +130,13 @@ pub struct Controller<V: View> {
     data_dir: Option<PathBuf>,
     #[cfg(all(unix, not(target_os = "android")))]
     discord: Option<crate::discord_presence::DiscordPresence>,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     stats_seq: u64,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     cache_dir: Option<PathBuf>,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     following_room: bool,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     followed_id: Option<String>,
 
     tab: NavTab,
@@ -164,7 +164,7 @@ pub struct Controller<V: View> {
     recorded_current: bool,
     listen_sample: Option<(Duration, Instant)>,
     listened: Duration,
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     listen_started: Option<i64>,
 
     liked: HashSet<String>,
@@ -233,13 +233,13 @@ impl<V: View> Controller<V> {
             data_dir: None,
             #[cfg(all(unix, not(target_os = "android")))]
             discord: None,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             stats_seq: 0,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             cache_dir: None,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             following_room: false,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             followed_id: None,
             tab: NavTab::Home,
             detail_open: false,
@@ -265,7 +265,7 @@ impl<V: View> Controller<V> {
             recorded_current: false,
             listen_sample: None,
             listened: Duration::ZERO,
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             listen_started: None,
             liked: HashSet::new(),
             pending_likes: HashMap::new(),
@@ -346,7 +346,7 @@ impl<V: View> Controller<V> {
         self.data_dir = Some(dir);
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn set_cache_dir(&mut self, dir: PathBuf) {
         self.cache_dir = Some(dir);
     }
@@ -450,7 +450,7 @@ impl<V: View> Controller<V> {
 
     pub fn handle(&mut self, msg: Msg) {
         match msg {
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Msg::StreamRemoved(result) => {
                 match result {
                     Ok(true) => self.notice("Cópia em cache removida.", false),
@@ -462,9 +462,9 @@ impl<V: View> Controller<V> {
                 }
                 self.android_storage_usage();
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Msg::StorageUsage { files, cache } => self.view.set_storage(files, cache),
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Msg::StreamCacheCleared(result) => {
                 match result {
                     Ok(bytes) => self.notice(&format!("Cache de áudio limpo. {} MiB liberados.", bytes / 1_048_576), false),
@@ -641,11 +641,11 @@ impl<V: View> Controller<V> {
                 self.view.open_detail(true);
                 self.detail_open = true;
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::Lyrics { seq, lines } if seq == self.art_seq => self.view.set_lyrics(&lines),
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::Lyrics { .. } => {}
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::ListeningStats { seq, stats, export } => {
                 if export {
                     self.android_export_stats(&stats);
@@ -653,7 +653,7 @@ impl<V: View> Controller<V> {
                     self.view.set_listening_stats(&stats);
                 }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::LocalTagsEdited(result) => match result {
                 Ok(()) => {
                     self.notice("Metadados salvos na cópia local.", false);
@@ -661,12 +661,12 @@ impl<V: View> Controller<V> {
                 }
                 Err(error) => self.notice(&error, true),
             },
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::M3uImported { count, skipped } => {
                 self.notice(&format!("{count} faixas importadas. {skipped} sem correspondência única."), false);
                 self.jobs.submit(Job::Refresh);
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::BackupReady { result, lan, room } => match result {
                 Ok(json) if !lan && crate::android::export_backup(&json) => {}
                 Ok(json) if lan && room && crate::android::publish_room_backup(&json) => {}
@@ -674,13 +674,13 @@ impl<V: View> Controller<V> {
                 Ok(_) => self.notice("Não foi possível iniciar o compartilhamento do backup.", true),
                 Err(error) => self.notice(&error, true),
             },
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::PeerSynced(result) => match result {
                 Ok(0) => {}
                 Ok(_) => self.jobs.submit(Job::Refresh),
                 Err(error) => log::warn!("sincronização LAN: {error}"),
             },
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::BackupRestored(result) => match result {
                 Ok(backup) => {
                     self.cfg = backup.config;
@@ -694,7 +694,7 @@ impl<V: View> Controller<V> {
                 }
                 Err(error) => self.notice(&error, true),
             },
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             JobResult::RemoteLyrics { seq, result } => {
                 if seq == self.art_seq {
                     match result {
@@ -791,7 +791,7 @@ impl<V: View> Controller<V> {
                 self.recorded_current = false;
                 self.listen_sample = None;
                 self.listened = Duration::ZERO;
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "ios"))]
                 {
                     self.listen_started = None;
                 }
@@ -821,7 +821,7 @@ impl<V: View> Controller<V> {
             }
             PlaybackEvent::Position { position, duration } => {
                 if self.pb.playing {
-                    #[cfg(target_os = "android")]
+                    #[cfg(any(target_os = "android", target_os = "ios"))]
                     if self.listen_started.is_none() {
                         self.listen_started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                             .ok().map(|elapsed| elapsed.as_secs() as i64);
@@ -918,7 +918,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_restore_state(&mut self, state: PlaybackState) {
         let status = state.status;
         self.on_engine(PlaybackEvent::QueueChanged {
@@ -993,7 +993,7 @@ impl<V: View> Controller<V> {
         }
         self.pb.now = Some(vm);
         self.art_seq += 1;
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         if let TrackSource::Local { path } = &item.track.source {
             self.jobs.submit(Job::Lyrics { seq: self.art_seq, path: path.clone() });
         }
@@ -1005,7 +1005,7 @@ impl<V: View> Controller<V> {
     }
 
     fn apply_output(&mut self, info: &OutputInfo) {
-        let default_name = if cfg!(target_os = "android") { "Este celular" } else { "Padrão do sistema" };
+        let default_name = if cfg!(any(target_os = "android", target_os = "ios")) { "Este celular" } else { "Padrão do sistema" };
         self.pb.output_name = match info.device.as_str() {
             d if d.is_empty() || d.to_ascii_lowercase().starts_with("default") => default_name.to_owned(),
             "null" => "Saída simulada".to_owned(),
@@ -1084,7 +1084,7 @@ impl<V: View> Controller<V> {
 
     fn publish_queue(&mut self) {
         let up = self.upcoming();
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         let queue_ids = up.iter().take(QUEUE_VIEW_MAX).map(|item| item.id).collect::<Vec<_>>();
         let mut tracks: Vec<TrackVm> = up
             .iter()
@@ -1128,7 +1128,7 @@ impl<V: View> Controller<V> {
         self.cover_pass(&mut vm);
         self.queue_vm = vm.clone();
         self.view.set_queue(&vm);
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         self.view.set_queue_ids(&queue_ids);
     }
 
@@ -1149,7 +1149,7 @@ impl<V: View> Controller<V> {
             _ => 0.0,
         };
         self.view.set_seek_available(self.duration.is_some_and(|d| !d.is_zero()));
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         self.view.set_position_millis(
             self.position.as_millis().min(u64::MAX as u128) as u64,
             self.duration.map(|d| d.as_millis().min(u64::MAX as u128) as u64),
@@ -1162,7 +1162,7 @@ impl<V: View> Controller<V> {
             return;
         }
         let Some(now) = &self.pb.now else { return };
-        let measured = self.engine_quality.is_some() || cfg!(target_os = "android");
+        let measured = self.engine_quality.is_some() || cfg!(any(target_os = "android", target_os = "ios"));
         let listened = if measured { self.listened } else { self.position };
         let long_enough = listened >= LISTEN_MIN
             || self.duration.is_some_and(|duration| !duration.is_zero() && listened.saturating_mul(2) >= duration);
@@ -1176,7 +1176,7 @@ impl<V: View> Controller<V> {
                 self.jobs.submit(Job::RecordPlay { id: now.id.clone(), listened_ms });
             }
         }
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         if let (Some(started), Some(duration)) = (self.listen_started, self.duration)
             && duration > Duration::from_secs(30)
             && self.listened >= (duration / 2).min(Duration::from_secs(240))
@@ -1268,10 +1268,10 @@ impl<V: View> Controller<V> {
                 self.detail_what = None;
                 self.detail_ids.clear();
                 self.detail_album = None;
-                if self.detail_open || cfg!(target_os = "android") {
+                if self.detail_open || cfg!(any(target_os = "android", target_os = "ios")) {
                     self.show_detail(DetailVm { state: LoadStateVm::Loading, ..Default::default() });
                 }
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "ios"))]
                 if what == DetailRef::Downloads && let Some(cache) = self.engine.cache().cloned() {
                     self.jobs.submit(Job::OpenCachedAudio { seq: self.detail_seq, cache });
                     return;
@@ -1281,7 +1281,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_close_detail(&mut self) {
         self.view.open_detail(false);
         self.detail_closed();
@@ -1296,7 +1296,7 @@ impl<V: View> Controller<V> {
         self.restore_visit();
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_room_playlist_track(&mut self, playlist: String, id: String, title: String, artist: String) {
         if !self.library.playlists.iter().any(|item| item.id == playlist)
             || id.is_empty() || id.len() > 32
@@ -1315,20 +1315,20 @@ impl<V: View> Controller<V> {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_set_following(&mut self, following: bool) {
         self.following_room = following;
         self.followed_id = None;
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_wait_for_room(&mut self) {
         if self.following_room && self.followed_id.is_some() {
             self.engine.pause();
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_follow_track(&mut self, id: String, title: String, artist: String, position: i64, playing: bool) -> bool {
         if !self.following_room || self.engine_quality.is_none() || id.is_empty() || id.len() > 32
             || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -1370,27 +1370,27 @@ impl<V: View> Controller<V> {
         true
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_play_track(&mut self, id: &str) {
         if self.android_has_focus() {
             self.play_track(id);
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_pause_for_system(&mut self) {
         self.cancel_radio_resume();
         self.engine.pause();
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_toggle_play(&mut self) {
         if self.pb.playing || self.pb.loading || self.android_has_focus() {
             self.toggle_play();
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_media_seek(&mut self, position_ms: i64) {
         self.listen_sample = None;
         if let Some(duration) = self.duration {
@@ -1399,7 +1399,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_has_focus(&mut self) -> bool {
         if crate::android::request_playback_focus() {
             true
@@ -1621,14 +1621,14 @@ impl<V: View> Controller<V> {
         self.publish_search();
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub fn add_folder(&mut self) {
         if !crate::android::select_music_folder() {
             self.notice("Seletor de pastas indisponível.", true);
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_register_imports(&mut self) {
         if let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")).filter(|dir| dir.is_dir()) {
             self.add_folder_path(root);
@@ -1636,9 +1636,9 @@ impl<V: View> Controller<V> {
     }
 
     pub fn browse_folders(&mut self, _path: &str) {
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         self.add_folder();
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         self.add_folder();
     }
 
@@ -1648,13 +1648,13 @@ impl<V: View> Controller<V> {
             self.toast("Informe o caminho completo de uma pasta.", true);
             return;
         }
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         self.add_folder();
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         self.add_folder_path(path);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn add_folder(&mut self) {
         let sink = self.sink.clone();
         let spawned = std::thread::Builder::new().name("kazzu-folder-dialog".into()).spawn(move || {
@@ -1664,6 +1664,11 @@ impl<V: View> Controller<V> {
         if spawned.is_err() {
             self.toast("Não foi possível abrir o seletor de pastas.", true);
         }
+    }
+
+    #[cfg(target_os = "ios")]
+    pub fn add_folder(&mut self) {
+        self.notice("Selecione as pastas na tela de configuração do iOS.", false);
     }
 
     /// Adiciona uma pasta já conhecida (ex.: `--demo-library`).
@@ -1747,12 +1752,12 @@ impl<V: View> Controller<V> {
         self.view.set_perf_offer(false);
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_set_playlist_cover(&mut self, id: String, bytes: Vec<u8>) {
         self.jobs.submit(Job::SetPlaylistCover { id, bytes });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_choose_playlist_cover(&mut self) {
         let id = &self.detail_vm.editable_playlist;
         if !id.is_empty() && !crate::android::select_playlist_cover(id) {
@@ -1760,19 +1765,19 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_restore_backup(&mut self, json: String) {
         let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
         self.jobs.submit(Job::RestoreBackup { root, json });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_sync_peer_playlists(&mut self, json: String) {
         let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
         self.jobs.submit(Job::SyncPeerPlaylists { root, json });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_host_room(&mut self, enabled: bool, share: bool, playlist: &str) {
         crate::android::host_remote(enabled, share, playlist);
         if enabled && share {
@@ -1780,24 +1785,24 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_create_backup(&mut self, lan: bool) {
         let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
         self.jobs.submit(Job::ExportBackup { root, config: Box::new(self.cfg.clone()), lan, room: false });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_publish_room_backup(&mut self) {
         let Some(root) = self.data_dir.as_ref().map(|dir| dir.join("imported-music")) else { return };
         self.jobs.submit(Job::ExportBackup { root, config: Box::new(self.cfg.clone()), lan: true, room: true });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_import_m3u(&mut self, title: String, contents: String) {
         self.jobs.submit(Job::ImportM3u { title, contents });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_edit_tags(&mut self, id: &str, title: &str, artist: &str, album: &str, genre: &str) {
         let Some(root) = self.data_dir.as_ref().map(|path| path.join("imported-music")) else { return };
         if title.trim().is_empty() || [title, artist, album, genre].iter().any(|value| value.len() > 4096) {
@@ -1811,7 +1816,7 @@ impl<V: View> Controller<V> {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_stats(&mut self, period: i32, export: bool) {
         let Some(from) = crate::android::listening_period_start(period) else {
             self.notice("Não foi possível calcular o período de escuta.", true);
@@ -1825,7 +1830,7 @@ impl<V: View> Controller<V> {
         self.jobs.submit(Job::ListeningStats { seq: self.stats_seq, from, until, export });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_export_stats(&mut self, stats: &kazzu_library::ListeningStats) {
         let ranks = |values: &[kazzu_library::ListeningRank]| values.iter().map(|rank| {
             serde_json::json!({
@@ -1844,12 +1849,12 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_create_playlist(&mut self, name: &str) {
         self.create_playlist(name, "");
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_rename_playlist(&mut self, name: &str) {
         let name = name.trim();
         if !name.is_empty() {
@@ -1857,12 +1862,12 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_delete_playlist(&mut self) {
         self.edit_playlist(crate::worker::PlaylistEdit::Delete);
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_edit_playlist_row(&mut self, action: &str, index: i32, track: &str) {
         let Ok(index) = usize::try_from(index) else { return };
         let track = track.to_owned();
@@ -1874,19 +1879,19 @@ impl<V: View> Controller<V> {
         self.edit_playlist(edit);
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_add_now_to_playlist(&mut self, playlist: &str) {
         if let Some(now) = self.pb.now.as_ref() {
             self.add_to_playlist(&now.id.clone(), playlist);
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_queue_track(&mut self, id: &str, next: bool) {
         self.queue_track(id, if next { QueueMode::PlayNext } else { QueueMode::Enqueue });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_lyrics(&mut self) {
         let Some(id) = self.pb.now.as_ref().and_then(|track| ytm_vm::strip_remote(&track.id)) else { return };
         if self.remote_enabled {
@@ -1895,7 +1900,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_watch_now(&mut self) {
         let Some(id) = self.pb.now.as_ref().and_then(|track| ytm_vm::strip_remote(&track.id)) else { return };
         if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
@@ -1908,7 +1913,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_share_now(&mut self) {
         let Some(now) = self.pb.now.as_ref() else { return };
         let mut text = format!("{} — {}", now.title, now.artist);
@@ -1922,7 +1927,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_home_feed(&mut self, feed: i32) {
         let section = match feed {
             1 => HomeSectionVm::Mixes,
@@ -1934,7 +1939,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_open_item(&mut self, kind: &str, id: &str) {
         if kind == "favorite-mix" {
             self.request_detail(DetailRef::FavoriteMix);
@@ -1953,14 +1958,14 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_play_detail(&mut self) {
         if self.android_has_focus() {
             self.play_all(false);
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_navigation(&mut self, tab: i32) {
         let tab = match tab {
             0 => NavTab::Home,
@@ -1974,7 +1979,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_storage_usage(&mut self) {
         let (Some(files), Some(cache)) = (self.data_dir.clone(), self.cache_dir.clone()) else { return };
         let sink = self.sink.clone();
@@ -1999,7 +2004,7 @@ impl<V: View> Controller<V> {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_remove_cached(&mut self, id: &str) {
         let (Some(track), Some(cache)) = (self.remote_tracks.peek(&id.to_owned()).cloned(), self.engine.cache().cloned()) else { return };
         let sink = self.sink.clone();
@@ -2008,7 +2013,7 @@ impl<V: View> Controller<V> {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     fn android_clear_cache(&mut self) {
         let Some(cache) = self.engine.cache().cloned() else {
             self.notice("Cache de áudio indisponível.", true);
@@ -2022,7 +2027,7 @@ impl<V: View> Controller<V> {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_glass(&mut self, index: i32, value: f32) {
         let Ok(index) = usize::try_from(index) else { return };
         let Some(slot) = self.cfg.mobile_appearance.glass.get_mut(index) else { return };
@@ -2034,7 +2039,7 @@ impl<V: View> Controller<V> {
         self.cfg_dirty = true;
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_setting(&mut self, key: &str, value: i32) {
         match key {
             "rounded" | "effects" | "vinyl" => {
@@ -2164,7 +2169,7 @@ impl<V: View> Controller<V> {
             autoplay_radio: self.cfg.autoplay_radio,
         };
         self.view.set_prefs(&prefs);
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         self.view.set_mobile_appearance(&self.cfg.mobile_appearance);
     }
 
@@ -2221,12 +2226,12 @@ impl<V: View> Controller<V> {
     pub fn shutdown(&mut self) {
         // On Android the library worker drains submissions before closing its
         // channel, so writes stay ordered across UI teardown and backgrounding.
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         if self.cfg_dirty {
             self.save_config();
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if let Some(path) = &self.cfg_path
             && let Err(e) = self.cfg.save(path)
         {

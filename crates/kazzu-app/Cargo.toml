@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [lib]
 name = "kazzu_app"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [features]
@@ -51,7 +51,7 @@ lofty = { version = "0.25", optional = true }
 slint-build = "1.19"
 
 # --- Desktop (Linux/Windows/macOS) ---
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 slint = { version = "1.19", default-features = false, features = [
     "std",
     "backend-default",
@@ -62,6 +62,20 @@ slint = { version = "1.19", default-features = false, features = [
 ] }
 pollster = "0.4"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# --- iOS (ver docs/IOS.md) ---
+# Backend winit do Slint; o Xcode chama `kazzu_ios_main` e a janela roda na main thread.
+[target.'cfg(target_os = "ios")'.dependencies]
+slint = { version = "1.19", default-features = false, features = [
+    "std",
+    "backend-winit",
+    "renderer-skia",
+    "renderer-software",
+    "accessibility",
+    "compat-1-2",
+] }
+# libopus estática: no iOS não há libopus do sistema.
+symphonia-adapter-libopus = { version = "0.3", default-features = false, features = ["bundled"] }
 
 # --- Android (ver docs/ANDROID.md) ---
 # Backend `android-activity` do Slint (NativeActivity, sem Java/Gradle próprio). Sem `backend-default`: o winit não é usado.

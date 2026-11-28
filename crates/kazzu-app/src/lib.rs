@@ -8,7 +8,10 @@ pub mod ui {
 
 #[cfg(target_os = "android")]
 pub mod android;
-#[cfg(target_os = "android")]
+#[cfg(target_os = "ios")]
+#[path = "ios_platform.rs"]
+pub(crate) mod android;
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod accessibility;
 #[cfg(target_os = "android")]
 mod android_paths;
@@ -16,13 +19,21 @@ mod android_paths;
 mod android_app;
 #[cfg(target_os = "android")]
 mod android_view;
-#[cfg(target_os = "android")]
+#[cfg(target_os = "ios")]
+mod ios_app;
+#[cfg(target_os = "ios")]
+pub use ios_app::{kazzu_ios_main, kazzu_ios_shutdown};
+#[cfg(target_os = "ios")]
+mod ios_paths;
+#[cfg(target_os = "ios")]
+mod mobile_view;
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod lyrics;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod m3u;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod backup;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod playlist_cover;
 mod event_bridge;
 #[cfg(all(unix, not(target_os = "android")))]
@@ -30,21 +41,21 @@ mod discord_presence;
 
 pub mod accent;
 mod accounts;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod app;
 pub mod art;
 pub mod catalog;
 pub mod config;
 pub mod controller;
 pub mod covers;
-#[cfg(all(not(target_os = "android"), feature = "demo"))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "demo"))]
 pub mod demo;
 pub mod format;
 pub mod lru;
 pub mod platform;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod slint_view;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod snapshot;
 pub mod view;
 pub mod vm;

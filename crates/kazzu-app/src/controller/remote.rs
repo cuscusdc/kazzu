@@ -655,7 +655,7 @@ impl<V: View> Controller<V> {
     // ----------------------------------------------------------------------------------------
 
     fn submit_local_play(&mut self, scope: Scope, start_id: Option<String>, shuffle: bool, label: String) {
-        if self.engine_quality.is_some() || cfg!(target_os = "android") {
+        if self.engine_quality.is_some() || cfg!(any(target_os = "android", target_os = "ios")) {
             self.ctx_seq += 1;
             self.ctx = None;
             self.engine_radio = None;
@@ -1229,7 +1229,7 @@ impl<V: View> Controller<V> {
         self.ctx.as_ref().and_then(|c| c.tail.iter().position(|e| e.id() == id)).map(RowPos::Tail)
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn android_queue_action(&mut self, action: &str, id: &str) {
         let Ok(id) = id.parse::<u64>() else { return };
         let id = QueueItemId(id);

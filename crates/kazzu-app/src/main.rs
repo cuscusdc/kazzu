@@ -1,5 +1,8 @@
 //! Binário `kazzu`: app desktop.
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod desktop {
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -138,7 +141,7 @@ fn relaunch_software() -> ExitCode {
     }
 }
 
-fn main() -> ExitCode {
+pub(super) fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,lofty=error")).init();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -148,4 +151,16 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn main() -> std::process::ExitCode {
+    desktop::main()
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn main() {
+    #[cfg(target_os = "ios")]
+    kazzu_app::kazzu_ios_main();
 }

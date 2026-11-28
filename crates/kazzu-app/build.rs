@@ -1,7 +1,8 @@
 fn main() {
-    // O APK usa a interface mobile nova (ui-mobile-v6); o desktop continua na árvore v5.
-    let android = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
-    let entry = if android { "ui-mobile-v6/main.slint" } else { "ui-v5/app.slint" };
+    // APK e IPA usam a interface mobile nova (ui-mobile-v6); o desktop continua na árvore v5.
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let mobile = os == "android" || os == "ios";
+    let entry = if mobile { "ui-mobile-v6/main.slint" } else { "ui-v5/app.slint" };
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
         .with_edition((1, 19));

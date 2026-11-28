@@ -1,0 +1,33 @@
+name: Kazzu
+options:
+  bundleIdPrefix: com.cuscusdc
+settings:
+  ENABLE_USER_SCRIPT_SANDBOXING: NO
+  IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+targets:
+  Kazzu:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Kazzu
+        CFBundleName: Kazzu
+        CADisableMinimumFrameDurationOnPhone: true
+        UILaunchScreen:
+          - ImageRespectSafeAreaInsets: false
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Slint
+                UISceneDelegateClassName: SlintWindowSceneDelegate
+        ITSAppUsesNonExemptEncryption: false
+    sources: []
+    postCompileScripts:
+      - name: Build with Cargo
+        script: |
+          ./build_for_ios_with_cargo.bash kazzu
+        outputFileLists:
+          - $TARGET_BUILD_DIR/$EXECUTABLE_PATH

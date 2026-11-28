@@ -53,7 +53,7 @@ pub enum RemoteJob {
     Radio { ctx_seq: u64, seed: String, prior: Option<Box<Radio>> },
     Covers { urls: Vec<String> },
     NowArt { seq: u64, url: String },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     Lyrics { seq: u64, id: String },
     Like { track: Track, liked: bool },
     SaveAlbum { album: Album, saved: bool },
@@ -219,7 +219,7 @@ impl RemoteWorker {
                     out(RemoteResult::Covers(rest));
                 }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             RemoteJob::Lyrics { seq, id } => {
                 emit(JobResult::RemoteLyrics { seq, result: cat.lyrics(&id).map_err(|error| error.kind()) });
             }

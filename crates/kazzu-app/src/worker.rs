@@ -30,7 +30,7 @@ pub const REMOTE_DEBOUNCE: Duration = Duration::from_millis(250);
 const SEARCH_LIMIT: usize = 50;
 const RECENTS: usize = 20;
 const HOME_ALBUMS: usize = 24;
-const THUMB_CACHE_MAX: usize = if cfg!(target_os = "android") { 144 } else { 400 };
+const THUMB_CACHE_MAX: usize = if cfg!(any(target_os = "android", target_os = "ios")) { 144 } else { 400 };
 const MOBILE_ALBUM_THUMBNAILS: usize = 48;
 
 /// O que tocar.
@@ -100,23 +100,23 @@ pub enum Job {
     PrepareQueue { seq: u64, entries: Vec<crate::controller::Entry>, start: usize, shuffle: bool, label: String },
     OpenDetail { seq: u64, what: DetailRef },
     NowArt { seq: u64, cover: Option<PathBuf> },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     Lyrics { seq: u64, path: PathBuf },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     ListeningStats { seq: u64, from: i64, until: i64, export: bool },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     EditLocalTags { root: PathBuf, track_id: String, title: String, artist: String, album: String, genre: String },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     ImportM3u { title: String, contents: String },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     ExportBackup { root: PathBuf, config: Box<crate::config::Config>, lan: bool, room: bool },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     RestoreBackup { root: PathBuf, json: String },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     SyncPeerPlaylists { root: PathBuf, json: String },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     SetPlaylistCover { id: String, bytes: Vec<u8> },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     OpenCachedAudio { seq: u64, cache: Arc<kazzu_audio::StreamCache> },
     /// View-models (com miniaturas) de faixas já conhecidas, para a fila.
     TrackVms { seq: u64, ids: Vec<String> },
@@ -163,21 +163,21 @@ pub enum JobResult {
     PreparedQueue { seq: u64, items: Vec<QueueItem>, start: usize, shuffle: bool, label: String },
     Detail { seq: u64, detail: Box<DetailVm>, ids: Vec<String>, remote_tracks: Vec<kazzu_core::Track> },
     NowArt { seq: u64, art: Box<NowArtVm> },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     Lyrics { seq: u64, lines: Vec<(i32, String)> },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     ListeningStats { seq: u64, stats: Box<kazzu_library::ListeningStats>, export: bool },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     LocalTagsEdited(Result<(), String>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     M3uImported { count: usize, skipped: usize },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     BackupReady { result: Result<String, String>, lan: bool, room: bool },
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     BackupRestored(Result<Box<crate::backup::Restored>, String>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     PeerSynced(Result<usize, String>),
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     RemoteLyrics { seq: u64, result: Result<Option<kazzu_ytm::Lyrics>, crate::catalog::ErrorKind> },
     TrackVms { seq: u64, tracks: Vec<TrackVm> },
     /// Lista "Recentes" atualizada (depois de registrar uma escuta).
@@ -312,7 +312,7 @@ impl Store {
 
     fn album_list(&mut self, albums: &[Album]) -> Vec<AlbumVm> {
         albums.iter().enumerate().map(|(index, album)| {
-            if !cfg!(target_os = "android") || index < MOBILE_ALBUM_THUMBNAILS {
+            if !cfg!(any(target_os = "android", target_os = "ios")) || index < MOBILE_ALBUM_THUMBNAILS {
                 self.album_vm(album)
             } else {
                 AlbumVm {
@@ -472,14 +472,14 @@ impl Store {
                     Err(error) => emit(JobResult::DetailFailed { seq, message: format!("Não foi possível abrir esta coleção. {error}") }),
                 }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::Lyrics { seq, path } => emit(JobResult::Lyrics { seq, lines: crate::lyrics::read_lrc(&path) }),
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::ListeningStats { seq, from, until, export } => {
                 let stats = Box::new(self.lib.listening_stats(from, until)?);
                 emit(JobResult::ListeningStats { seq, stats, export });
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::EditLocalTags { root, track_id, title, artist, album, genre } => {
                 let result = (|| {
                     let id = parse_id(&track_id).ok_or("Faixa local inválida.")?;
@@ -493,7 +493,7 @@ impl Store {
                 })();
                 emit(JobResult::LocalTagsEdited(result));
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::ImportM3u { title, contents } => {
                 let (ids, skipped) = crate::m3u::resolve(&contents, self.lib.tracks()?);
                 if ids.is_empty() {
@@ -505,19 +505,19 @@ impl Store {
                     emit(JobResult::M3uImported { count: ids.len(), skipped });
                 }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::ExportBackup { root, config, lan, room } => {
                 emit(JobResult::BackupReady { result: crate::backup::export(&self.lib, &root, *config), lan, room });
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::RestoreBackup { root, json } => {
                 emit(JobResult::BackupRestored(crate::backup::restore(&mut self.lib, &root, &json).map(Box::new)));
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::SyncPeerPlaylists { root, json } => {
                 emit(JobResult::PeerSynced(crate::backup::sync_playlists(&mut self.lib, &root, &json)));
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::SetPlaylistCover { id, bytes } => {
                 match crate::playlist_cover::encode(&bytes) {
                     Ok(image) => {
@@ -528,7 +528,7 @@ impl Store {
                     Err(error) => emit(JobResult::Failed(error)),
                 }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             Job::OpenCachedAudio { seq, cache } => {
                 let complete = cache.complete_keys();
                 let mut seen = HashSet::new();
@@ -759,7 +759,7 @@ impl Store {
 
         Ok(Snapshot {
             home: HomeVm { recents, albums, ..Default::default() },
-            library: LibraryVm { #[cfg(target_os = "android")] genres: self.lib.genres()?, listening_summary: self.listening_summary()?, albums: self.album_list(&all_albums), artists: self.lib.artists()?.into_iter().map(|a| ArtistVm { id: a.id.0.to_string(), name: a.name, subtitle: format::songs_label(a.track_count as u64), ..Default::default() }).collect(), collections, playlists: playlist_vms },
+            library: LibraryVm { #[cfg(any(target_os = "android", target_os = "ios"))] genres: self.lib.genres()?, listening_summary: self.listening_summary()?, albums: self.album_list(&all_albums), artists: self.lib.artists()?.into_iter().map(|a| ArtistVm { id: a.id.0.to_string(), name: a.name, subtitle: format::songs_label(a.track_count as u64), ..Default::default() }).collect(), collections, playlists: playlist_vms },
             settings: SettingsVm {
                 folders: folders.iter().map(|p| p.display().to_string()).collect(),
                 summary: format::library_summary(folders.len(), track_count),

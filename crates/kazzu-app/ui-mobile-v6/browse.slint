@@ -539,47 +539,6 @@ export component Library inherits VerticalLayout {
 
 }
 
-export component Replay inherits VerticalLayout {
-    spacing: 11px;
-    Header { title: "Replay"; back: true; }
-    Ink { text: ["Hoje", "Esta semana", "Este mês", "Este ano", "Todo o tempo"][UI.replay-period]; color: UI.palette.muted; font-size: 16px; }
-    Rectangle {
-        height: 42px; border-radius: 14px; background: UI.palette.card;
-        HorizontalLayout {
-            padding: 4px; spacing: 3px;
-            for period[i] in ["Hoje", "Semana", "Mês", "Ano", "Sempre"] : Pill {
-                title: period; selected: i == UI.replay-period; inverse: true; horizontal-stretch: 1; side-padding: 7px;
-                activated => { UI.replay-period = i; AppBridge.listening-stats(i, false); }
-            }
-        }
-    }
-
-    init => { AppBridge.listening-stats(UI.replay-period, false); }
-    if UI.replay-period == 3 && (AppBridge.top-songs.length > 0 || AppBridge.top-artists.length > 0) : AnnualReplay {}
-    Rectangle {
-        height: 206px; border-radius: UI.card-radius;
-        background: @linear-gradient(145deg, UI.palette.selected, UI.palette.high);
-        VerticalLayout {
-            padding: 18px; spacing: 4px;
-            Ink { text: "SUA EXPERIÊNCIA DE ESCUTA"; font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
-            Rectangle { vertical-stretch: 1; }
-            Ink { text: AppBridge.listening-minutes; font-size: 52px; font-weight: 800; }
-            Ink { text: "MINUTOS OUVIDOS"; font-size: 11px; font-weight: 800; }
-            Rectangle { vertical-stretch: 1; }
-            Ink { text: AppBridge.listening-plays; font-size: 12px; color: UI.palette.muted; }
-        }
-    }
-    Row {
-        title: "Exportar estatísticas"; glyph: @image-url("assets/share.svg");
-        activated => { AppBridge.listening-stats(UI.replay-period, true); }
-    }
-    RankList { heading: "Músicas mais ouvidas"; items: AppBridge.top-songs; }
-    RankList { heading: "Artistas mais ouvidos"; items: AppBridge.top-artists; }
-    RankList { heading: "Álbuns mais ouvidos"; items: AppBridge.top-albums; }
-    RankList { heading: "Gêneros favoritos"; items: AppBridge.top-genres; }
-
-}
-
 component AnnualReplay inherits VerticalLayout {
     spacing: 6px;
     private property <int> page;
@@ -624,6 +583,47 @@ component RankList inherits VerticalLayout {
         Ink { width: 24px; text: "\{i + 1}"; color: UI.palette.muted; vertical-alignment: center; }
         Row { title: item.title; sub: item.sub; interactive: false; chevron: false; }
     }
+}
+
+export component Replay inherits VerticalLayout {
+    spacing: 11px;
+    Header { title: "Replay"; back: true; }
+    Ink { text: ["Hoje", "Esta semana", "Este mês", "Este ano", "Todo o tempo"][UI.replay-period]; color: UI.palette.muted; font-size: 16px; }
+    Rectangle {
+        height: 42px; border-radius: 14px; background: UI.palette.card;
+        HorizontalLayout {
+            padding: 4px; spacing: 3px;
+            for period[i] in ["Hoje", "Semana", "Mês", "Ano", "Sempre"] : Pill {
+                title: period; selected: i == UI.replay-period; inverse: true; horizontal-stretch: 1; side-padding: 7px;
+                activated => { UI.replay-period = i; AppBridge.listening-stats(i, false); }
+            }
+        }
+    }
+
+    init => { AppBridge.listening-stats(UI.replay-period, false); }
+    if UI.replay-period == 3 && (AppBridge.top-songs.length > 0 || AppBridge.top-artists.length > 0) : AnnualReplay {}
+    Rectangle {
+        height: 206px; border-radius: UI.card-radius;
+        background: @linear-gradient(145deg, UI.palette.selected, UI.palette.high);
+        VerticalLayout {
+            padding: 18px; spacing: 4px;
+            Ink { text: "SUA EXPERIÊNCIA DE ESCUTA"; font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
+            Rectangle { vertical-stretch: 1; }
+            Ink { text: AppBridge.listening-minutes; font-size: 52px; font-weight: 800; }
+            Ink { text: "MINUTOS OUVIDOS"; font-size: 11px; font-weight: 800; }
+            Rectangle { vertical-stretch: 1; }
+            Ink { text: AppBridge.listening-plays; font-size: 12px; color: UI.palette.muted; }
+        }
+    }
+    Row {
+        title: "Exportar estatísticas"; glyph: @image-url("assets/share.svg");
+        activated => { AppBridge.listening-stats(UI.replay-period, true); }
+    }
+    RankList { heading: "Músicas mais ouvidas"; items: AppBridge.top-songs; }
+    RankList { heading: "Artistas mais ouvidos"; items: AppBridge.top-artists; }
+    RankList { heading: "Álbuns mais ouvidos"; items: AppBridge.top-albums; }
+    RankList { heading: "Gêneros favoritos"; items: AppBridge.top-genres; }
+
 }
 
 export component Search inherits VerticalLayout {
