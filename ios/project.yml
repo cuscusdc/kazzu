@@ -29,5 +29,6 @@ targets:
       - name: Build with Cargo
         script: |
           ./build_for_ios_with_cargo.bash kazzu
-        outputFileLists:
+        basedOnDependencyAnalysis: false
+        outputFiles:
           - $TARGET_BUILD_DIR/$EXECUTABLE_PATH
