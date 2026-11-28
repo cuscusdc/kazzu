@@ -7,8 +7,8 @@
 # Assinatura: a chave de release do autor NUNCA fica no repositório. Para publicar com ela, cadastre os segredos
 #   KAZZU_KEYSTORE_B64      (base64 -w0 ~/.android/kazzu-release.jks)
 #   KAZZU_KEYSTORE_PASSWORD (conteúdo de ~/.android/kazzu-release.pass)
-# Sem esses segredos o CI assina com uma chave descartável (--debug-sign) e NÃO publica na release: um APK com
-# outra chave não atualiza por cima do instalado e confundiria os testadores. Ver docs/ANDROID.md.
+# Sem esses segredos o CI assina com chave descartável (--debug-sign) e publica uma pré-release sinalizada:
+# um APK com outra chave não atualiza por cima do instalado. Ver docs/ANDROID.md.
 name: android
 
 on:
@@ -96,7 +96,7 @@ jobs:
             echo "release_key=true" >> "$GITHUB_OUTPUT"
           else
             echo "release_key=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Segredos de assinatura ausentes: APK assinado com chave descartável; não será publicado na release."
+            echo "::warning::Segredos de assinatura ausentes: APK assinado com chave descartável; a release será marcada como CI."
           fi
 
       - name: Compilar e assinar o APK (arm64-v8a)
@@ -106,17 +106,25 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kazzu-${{ steps.ver.outputs.version }}-android
+          name: kazzu-${{ steps.ver.outputs.version }}-arm64-v8a
           path: |
             target/android/apk/*.apk
             target/android/apk/*.sha256
           if-no-files-found: error
 
       - name: Anexar à release
-        if: github.ref_type == 'tag' && steps.sign.outputs.release_key == 'true'
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=""; [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" $pre --title "Kazzu $GITHUB_REF_NAME" --notes "APK para Android (arm64-v8a). Ver docs/ANDROID.md."
+          sign="APK assinado com a chave oficial."
+          [[ "${{ steps.sign.outputs.release_key }}" == "true" ]] || sign="APK assinado com chave descartável (--debug-sign); não é build de distribuição."
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" $pre \
+            --title "Kazzu $GITHUB_REF_NAME" \
+            --notes "Kazzu $GITHUB_REF_NAME — Android ARM64 (arm64-v8a).
+
+$sign
+
+O APK e o arquivo .sha256 são anexados a esta release. Ver docs/ANDROID.md."
           gh release upload "$GITHUB_REF_NAME" target/android/apk/*.apk target/android/apk/*.sha256 --clobber
