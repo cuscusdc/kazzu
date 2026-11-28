@@ -6,31 +6,21 @@ Kazzu é um player de música livre em Rust e Slint, voltado a Hi-Fi e Hi-Res at
 
 ## Capturas de tela
 
-![Início](design/v4/shots/ui-nova/01-home.png)
-
-![Explorar](design/v4/shots/ui-nova/02-explore.png)
-
-![Biblioteca](design/v4/shots/ui-nova/03-library.png)
-
-![Busca](design/v4/shots/ui-nova/04-search.png)
-
-![Retrospectiva](design/v4/shots/ui-nova/05-replay.png)
-
-![Configurações](design/v4/shots/ui-nova/06-settings.png)
-
-![Detalhes de configuração](design/v4/shots/ui-nova/07-settings-page.png)
-
-![Aparência](design/v4/shots/ui-nova/08-appearance.png)
-
-![Tema claro](design/v4/shots/ui-nova/09-light.png)
-
-![Player](design/v4/shots/ui-nova/10-player.png)
-
-![Fila](design/v4/shots/ui-nova/11-queue.png)
-
-![Mais opções](design/v4/shots/ui-nova/12-more.png)
-
-![Letras](design/v4/shots/ui-nova/13-lyrics.png)
+<p align="center">
+  <img src="design/v4/shots/ui-nova/01-home.png" width="72" alt="Início">
+  <img src="design/v4/shots/ui-nova/02-explore.png" width="72" alt="Explorar">
+  <img src="design/v4/shots/ui-nova/03-library.png" width="72" alt="Biblioteca">
+  <img src="design/v4/shots/ui-nova/04-search.png" width="72" alt="Busca">
+  <img src="design/v4/shots/ui-nova/05-replay.png" width="72" alt="Retrospectiva">
+  <img src="design/v4/shots/ui-nova/06-settings.png" width="72" alt="Configurações">
+  <img src="design/v4/shots/ui-nova/07-settings-page.png" width="72" alt="Detalhes de configuração">
+  <img src="design/v4/shots/ui-nova/08-appearance.png" width="72" alt="Aparência">
+  <img src="design/v4/shots/ui-nova/09-light.png" width="72" alt="Tema claro">
+  <img src="design/v4/shots/ui-nova/10-player.png" width="72" alt="Player">
+  <img src="design/v4/shots/ui-nova/11-queue.png" width="72" alt="Fila">
+  <img src="design/v4/shots/ui-nova/12-more.png" width="72" alt="Mais opções">
+  <img src="design/v4/shots/ui-nova/13-lyrics.png" width="72" alt="Letras">
+</p>
 
 ## Funcionalidades atuais
 
