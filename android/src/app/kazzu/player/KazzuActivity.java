@@ -67,6 +67,7 @@ public final class KazzuActivity extends NativeActivity {
     private AudioFocusRequest focusRequest;
     private View accessibilityHost;
     private KazzuAccessibilityProvider accessibilityProvider;
+    private View.AccessibilityDelegate accessibilityDelegate;
     private String pendingAccessibilityTree = "{\"nodes\":[]}";
 
     static native void nativeRoomPlaylistTrack(String playlist, String id, String title, String artist);
@@ -127,7 +128,12 @@ public final class KazzuActivity extends NativeActivity {
         if (decor == null) return;
         accessibilityHost = decor;
         accessibilityProvider = new KazzuAccessibilityProvider();
-        decor.setAccessibilityNodeProvider(accessibilityProvider);
+        accessibilityDelegate = new View.AccessibilityDelegate() {
+            @Override public AccessibilityNodeProvider getAccessibilityNodeProvider(View host) {
+                return accessibilityProvider;
+            }
+        };
+        decor.setAccessibilityDelegate(accessibilityDelegate);
         decor.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         accessibilityProvider.replace(pendingAccessibilityTree);
     }
@@ -662,7 +668,11 @@ public final class KazzuActivity extends NativeActivity {
             social.shutdown();
             imports.shutdownNow();
             abandonPlaybackFocus();
-            if (accessibilityHost != null) accessibilityHost.setAccessibilityNodeProvider(null);
+            if (accessibilityHost != null) {
+                accessibilityProvider = null;
+                accessibilityHost.setAccessibilityDelegate(null);
+                accessibilityDelegate = null;
+            }
             nativeShutdown();
             stopService(new Intent(this, KazzuMediaService.class));
         }
@@ -685,6 +695,15 @@ public final class KazzuActivity extends NativeActivity {
     }
 
     private final class KazzuAccessibilityProvider extends AccessibilityNodeProvider {
+        private static final int ACTION_INCREMENT = 0x01000001;
+        private static final int ACTION_DECREMENT = 0x01000002;
+        private static final int ACTION_DELETE = 0x01000003;
+        private final AccessibilityNodeInfo.AccessibilityAction incrementAction =
+                new AccessibilityNodeInfo.AccessibilityAction(ACTION_INCREMENT, "Aumentar");
+        private final AccessibilityNodeInfo.AccessibilityAction decrementAction =
+                new AccessibilityNodeInfo.AccessibilityAction(ACTION_DECREMENT, "Diminuir");
+        private final AccessibilityNodeInfo.AccessibilityAction deleteAction =
+                new AccessibilityNodeInfo.AccessibilityAction(ACTION_DELETE, "Remover");
         private final Map<String, Integer> ids = new HashMap<>();
         private final Map<Integer, AccessibilityNode> nodes = new HashMap<>();
         private final List<Integer> order = new ArrayList<>();
@@ -825,9 +844,9 @@ public final class KazzuActivity extends NativeActivity {
                 info.setClickable(true);
                 info.addAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
-            if (!node.increment.isEmpty()) info.addAction(AccessibilityNodeInfo.ACTION_INCREMENT);
-            if (!node.decrement.isEmpty()) info.addAction(AccessibilityNodeInfo.ACTION_DECREMENT);
-            if (!node.delete.isEmpty()) info.addAction(AccessibilityNodeInfo.ACTION_DELETE);
+            if (!node.increment.isEmpty()) info.addAction(incrementAction);
+            if (!node.decrement.isEmpty()) info.addAction(decrementAction);
+            if (!node.delete.isEmpty()) info.addAction(deleteAction);
             info.setBoundsInScreen(bounds(virtualViewId));
             for (String key : node.children) {
                 Integer child = ids.get(key);
@@ -838,7 +857,7 @@ public final class KazzuActivity extends NativeActivity {
 
         @Override public AccessibilityNodeInfo findFocus(int focusDirection) {
             if (order.isEmpty()) return null;
-            int index = focusDirection == AccessibilityNodeInfo.FOCUS_BACKWARD ? order.size() - 1 : 0;
+            int index = focusDirection == View.FOCUS_BACKWARD ? order.size() - 1 : 0;
             return createAccessibilityNodeInfo(order.get(index));
         }
 
@@ -847,9 +866,9 @@ public final class KazzuActivity extends NativeActivity {
             if (node == null) return false;
             String command = "";
             if (action == AccessibilityNodeInfo.ACTION_CLICK) command = node.click;
-            else if (action == AccessibilityNodeInfo.ACTION_INCREMENT) command = node.increment;
-            else if (action == AccessibilityNodeInfo.ACTION_DECREMENT) command = node.decrement;
-            else if (action == AccessibilityNodeInfo.ACTION_DELETE) command = node.delete;
+            else if (action == ACTION_INCREMENT) command = node.increment;
+            else if (action == ACTION_DECREMENT) command = node.decrement;
+            else if (action == ACTION_DELETE) command = node.delete;
             if (command.isEmpty()) return false;
             nativeMediaAction(command, 0);
             return true;
