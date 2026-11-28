@@ -41,9 +41,9 @@ Planejado: downloads para uso offline, equalizador, crossfade, seleção de saí
 
 ## Instalação
 
-Android ARM64, Android 8 ou superior: [Instalar no Android](https://github.com/cuscusdc/kazzu/releases/download/v0.4.0-alpha.1/kazzu-0.4.0-alpha.1-arm64-v8a.apk)
+Android ARM64, Android 8 ou superior: [Instalar no Android](https://github.com/cuscusdc/kazzu/releases/download/v0.6.0-ci.3/kazzu-0.6.0-ci.3-arm64-v8a.apk)
 
-O link aponta para o APK da release pública mais recente, `v0.4.0-alpha.1`. Releases alpha são pré-releases; URLs de assets por tag são permanentes e mantêm a versão no nome do arquivo. Builds de CI com tag `v0.6.0-ci.*` são artefatos internos, assinados com chave descartável e não possuem link público permanente.
+O link aponta para o APK da pré-release de CI mais recente, `v0.6.0-ci.3`. A build usa chave descartável e apresenta a interface v6 em modo demonstração; desinstale a versão anterior antes de instalar. URLs de assets por tag são permanentes e mantêm a versão no nome do arquivo.
 
 Para desktop, compile a partir do fonte com os comandos abaixo.
 
