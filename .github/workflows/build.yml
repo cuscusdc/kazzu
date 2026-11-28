@@ -161,6 +161,10 @@ jobs:
         shell: bash
         run: xcodebuild -version
 
+      - name: Xcodegen
+        shell: bash
+        run: brew install xcodegen
+
       - name: Preparar projeto iOS
         shell: bash
         run: scripts/build-ios.sh --prepare
